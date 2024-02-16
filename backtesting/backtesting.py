@@ -964,7 +964,8 @@ class _Broker:
         else:
             print("未知的 DataFrame 类型")
         index = pd.to_datetime(dateIndex)  # 转换为日期，并且标准化时间为00:00:00
-        unique_dates = pd.Index(index.unique().date)  # 转换为日期对象，并去重
+        # unique_dates = pd.Index(index.unique().date)  # 转换为日期对象，并去重
+        unique_dates = pd.Index(index.dt.date.unique())
 
         # 使用去重后的日期作为索引创建Series
         self._equity = pd.Series(index=unique_dates, dtype=float)
