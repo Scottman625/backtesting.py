@@ -1097,7 +1097,7 @@ class _Broker:
     @property
     def last_price(self) -> float:
         """ Price at the last (current) close. """
-        return self._data.Close[-1]
+        return self._data.filtered_data.Close.iloc[-1]
 
     def _adjusted_price(self, size=None, price=None) -> float:
         """
@@ -1131,7 +1131,7 @@ class _Broker:
         if equity <= 0:
             assert self.margin_available <= 0
             for trade in self.trades:
-                self._close_trade(trade, self._data.Close[-1], i)
+                self._close_trade(trade, self._data.filtered_data.Close.iloc[-1], i)
             self._cash = 0
             self._equity[i:] = 0
             raise _OutOfMoneyError
@@ -1142,7 +1142,7 @@ class _Broker:
     def _handle_negative_equity(self, current_date):
         assert self.margin_available <= 0
         for trade in self.trades:
-            self._close_trade(trade, self._data.filtered_data.Close[-1], current_date)  # 确保_close_trade方法能接受日期参数
+            self._close_trade(trade, self._data.filtered_data.Close.iloc[-1], current_date)  # 确保_close_trade方法能接受日期参数
         self._cash = 0
         self._equity[current_date:] = 0  # 注意：这一行可能需要调整，因为直接设置 pd.Series 切片为 0 可能不适用
         raise _OutOfMoneyError
@@ -1327,7 +1327,6 @@ class _Broker:
         self._close_trade(close_trade, price, time_index)
 
     def _close_trade(self, trade: Trade, price: float, time_index):
-        print("測試")
         self.trades.remove(trade)
         if trade._sl_order:
             self.orders.remove(trade._sl_order)
