@@ -7,7 +7,6 @@ module directly, e.g.
 """
 import multiprocessing as mp
 import os
-import django
 import sys
 import warnings
 from abc import ABCMeta, abstractmethod
@@ -18,9 +17,7 @@ from itertools import chain, compress, product, repeat
 from math import copysign
 from numbers import Number
 from typing import Callable, Dict, List, Optional, Sequence, Tuple, Type, Union
-from decimal import Decimal
 import datetime
-import dask.array as da
 
 import numpy as np
 import pandas as pd
