@@ -841,11 +841,10 @@ class Trade:
         # 假设self.__entry_bar是入场位置的整数索引
         entry_bar_value = self.__entry_bar
         df_pandas = self.__broker._data.__getdata__().date.compute()
-        
+
         # 使用Pandas的`.iloc`进行行选择
         entry_time_date = df_pandas.iloc[entry_bar_value]
         return entry_time_date
-
 
 
     @property
@@ -866,7 +865,6 @@ class Trade:
         except:
             print("exit_bar_value:", exit_bar_value)
             print("Length of df_pandas:", len(df_pandas))
-
 
 
     @property
