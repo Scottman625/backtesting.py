@@ -114,8 +114,10 @@ def compute_stats(
     s.loc['Equity Final [$]'] = equity[-1]
     s.loc['Equity Peak [$]'] = equity.max()
     s.loc['Return [%]'] = (equity[-1] - equity[0]) / equity[0] * 100
-    c = ohlc_data.Close.compute().values
-    s.loc['Buy & Hold Return [%]'] = (c[-1] - c[0]) / c[0] * 100  # long-only return
+    c_start = ohlc_data[ohlc_data['date']==index[0]].Close.compute().sum()
+    c_end = ohlc_data[ohlc_data['date']==index[-1]].Close.compute().sum()
+    # s.loc['Buy & Hold Return [%]'] = (c[-1] - c[0]) / c[0] * 100  # long-only return
+    s.loc['Buy & Hold Return [%]'] = (c_end - c_start) / c_start * 100  # long-only return
 
     gmean_day_return: float = 0
     day_returns = np.array(np.nan)
