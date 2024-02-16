@@ -954,6 +954,9 @@ class _Broker:
         self._exclusive_orders = exclusive_orders
 
         # 假设 self._data.df['date'] 是包含日期时间戳的列
+        print('testttttttt')
+        print(self._data.df['date'].head())  # 打印前几行查看数据格式
+        print(self._data.df['date'].dtype)  # 检查数据类型
         index = pd.to_datetime(self._data.__getdata__()['date'])  # 转换为日期，并且标准化时间为00:00:00
         unique_dates = pd.Index(index.unique().date)  # 转换为日期对象，并去重
 
