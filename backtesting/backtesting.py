@@ -954,7 +954,7 @@ class _Broker:
         self._exclusive_orders = exclusive_orders
 
         # 假设 self._data.df['date'] 是包含日期时间戳的列
-        index = pd.to_datetime(self._data.df['date']).normalize()  # 转换为日期，并且标准化时间为00:00:00
+        index = pd.to_datetime(self._data.df['date'])  # 转换为日期，并且标准化时间为00:00:00
         unique_dates = pd.Index(index.unique().date)  # 转换为日期对象，并去重
 
         # 使用去重后的日期作为索引创建Series
