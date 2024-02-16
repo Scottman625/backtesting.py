@@ -1604,14 +1604,11 @@ class Backtest:
         def process_batch(current_batch, historical_data=None):
             # 合并历史数据和当前批次的数据
             if historical_data is not None:
-                combined_data = dd.concat([historical_data, current_batch])
+                combined_data = pd.concat([historical_data, current_batch])
             else:
                 combined_data = current_batch
             
-            # 在这里执行你的数据处理逻辑...
-            # 例如，计算当前批次中每条记录基于过去五天数据的某个指标
-            broker.update_current_date(current_date)
-
+            # 返回处理后的数据和用于下一批次的历史数据
             current_date_ts = pd.Timestamp(current_date)
             
             # 计算5天前的日期
@@ -1619,42 +1616,46 @@ class Backtest:
             
             # 筛选出当前日期之前5天内的所有数据
             # 注意：这里包括了当前日期当天的数据，如果不需要当天的数据，可以将条件改为 < current_date
-            current_data_up_to_date = self._data[(self._data['date'] > five_days_ago) & (self._data['date'] <= current_date)]
-            # # 更新 data 和 strategy 的状态，以反映当前日期的数据
-            current_data_up_to_date = current_data_up_to_date.compute()
-            data.set_data(current_data_up_to_date)
-            
-            # data._set_length(i + 1)
-            # i += 1
-            # 处理订单和经纪人事务
-            try:
-                broker.next()
-                # 为了简化，我们假设 strategy.next 方法已经被修改为接受当前数据作为参数
-                strategy.next(current_data_up_to_date)
-            except _OutOfMoneyError:
-                pass
-            
-            # 返回处理后的数据和用于下一批次的历史数据
-            return combined_data, combined_data.tail(5)  # 假设这里返回了处理后的数据和最新的五天数据
+            current_data_up_to_date = combined_data[(combined_data['date'] > five_days_ago) & (combined_data['date'] <= current_date)]
+            return  current_data_up_to_date  # 假设这里返回了处理后的数据和最新的五天数据
         
         # 初始化历史数据变量
         historical_data = None
 
-
+        progress_len = len(self._all_dates)
             
         with np.errstate(invalid='ignore'):
             i = 0
             for current_date in self._all_dates:
-
-                # 确定当前批次的日期范围
-                start_date = current_date - datetime.timedelta(days=5)
-                end_date = current_date
-                
+                if ((i -1) / progress_len < 0.2) and (i / progress_len > 0.2):
+                    print('progress is now 20 %')
+                elif((i -1) / progress_len < 0.4) and (i / progress_len > 0.4):
+                    print('progress is now 40 %')
+                elif((i -1) / progress_len < 0.6) and (i / progress_len > 0.6):
+                    print('progress is now 60 %')
+                elif((i -1) / progress_len < 0.8) and (i / progress_len > 0.8):
+                    print('progress is now 40 %')
+                elif((i -1) / progress_len < 1) and (i / progress_len == 1):
+                    print("progress is 100% complete")
                 # 选择当前批次的数据
-                current_batch = self._data.loc[self._data['date'].between(start_date, end_date)]
+                # current_batch = self._data.loc[self._data['date'].between(start_date, end_date)]
+                current_batch = self._data.loc[self._data['date']==current_date].compute()
                 
                 # 处理当前批次
-                processed_data, historical_data = process_batch(current_batch, historical_data)
+                historical_data = process_batch(current_batch, historical_data)
+                
+                # 在这里执行你的数据处理逻辑...
+                # 例如，计算当前批次中每条记录基于过去五天数据的某个指标
+                broker.update_current_date(current_date)
+                data.set_data(historical_data)
+
+                # 处理订单和经纪人事务
+                try:
+                    broker.next()
+                    # 为了简化，我们假设 strategy.next 方法已经被修改为接受当前数据作为参数
+                    strategy.next(historical_data)
+                except _OutOfMoneyError:
+                    pass
 
                 data._set_length(i)
                 i += 1
