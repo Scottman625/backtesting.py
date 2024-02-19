@@ -539,214 +539,6 @@ class Order:
         [OCO]: https://www.investopedia.com/terms/o/oco.asp
         """
         return bool(self.__parent_trade)
-
-
-# class Trade:
-#     """
-#     When an `Order` is filled, it results in an active `Trade`.
-#     Find active trades in `Strategy.trades` and closed, settled trades in `Strategy.closed_trades`.
-#     """
-#     # def __init__(self, broker: '_Broker', size: int, entry_price: float, entry_bar, tag):
-#     #     self.__broker = broker
-#     #     self.__size = size
-#     #     self.__entry_price = entry_price
-#     #     self.__exit_price: Optional[float] = None
-#     #     self.__entry_bar: int = entry_bar
-#     #     self.__exit_bar: Optional[int] = None
-#     #     self.__sl_order: Optional[Order] = None
-#     #     self.__tp_order: Optional[Order] = None
-#     #     self.__tag = tag
-
-#     def __init__(self, broker, size, entry_price, entry_time, tag):
-#         self.__broker = broker
-#         self.__size = size
-#         self.__entry_price = entry_price
-#         self.__exit_price: Optional[float] = None
-#         self.__entry_time = entry_time  # 使用时间而不是条目索引
-#         self.__exit_time = None
-#         self.__sl_order: Optional[Order] = None
-#         self.__tp_order: Optional[Order] = None
-#         self.__tag = tag
-#         # 其他属性保持不变
-
-#     def __repr__(self):
-#         return f'<Trade size={self.__size} time={self.__entry_time}-{self.__exit_time or ""} ' \
-#                f'price={self.__entry_price}-{self.__exit_price or ""} pl={self.pl:.0f}' \
-#                f'{" tag="+str(self.__tag) if self.__tag is not None else ""}>'
-
-#     def _replace(self, **kwargs):
-#         for k, v in kwargs.items():
-#             setattr(self, f'_{self.__class__.__qualname__}__{k}', v)
-#         return self
-
-#     def _copy(self, **kwargs):
-#         return copy(self)._replace(**kwargs)
-
-#     def close(self, portion: float = 1.):
-#         """Place new `Order` to close `portion` of the trade at next market price."""
-#         assert 0 < portion <= 1, "portion must be a fraction between 0 and 1"
-#         size = copysign(max(1, round(abs(self.__size) * portion)), -self.__size)
-#         order = Order(self.__broker, size, parent_trade=self, tag=self.__tag)
-#         self.__broker.orders.insert(0, order)
-
-#     # Fields getters
-
-#     @property
-#     def size(self):
-#         """Trade size (volume; negative for short trades)."""
-#         return self.__size
-
-#     @property
-#     def entry_price(self) -> float:
-#         """Trade entry price."""
-#         return self.__entry_price
-
-#     @property
-#     def exit_price(self) -> Optional[float]:
-#         """Trade exit price (or None if the trade is still active)."""
-#         return self.__exit_price
-    
-#     @property
-#     def entry_time(self):
-#         """交易的进入日期"""
-#         return self.__entry_time
-
-#     @property
-#     def exit_time(self):
-#         """交易的退出日期"""
-#         return self.__exit_time
-
-#     # @property
-#     # def entry_bar(self) -> int:
-#     #     """Candlestick bar index of when the trade was entered."""
-#     #     return self.__entry_bar
-
-#     # @property
-#     # def exit_bar(self) -> Optional[int]:
-#     #     """
-#     #     Candlestick bar index of when the trade was exited
-#     #     (or None if the trade is still active).
-#     #     """
-#     #     return self.__exit_bar
-
-#     @property
-#     def tag(self):
-#         """
-#         A tag value inherited from the `Order` that opened
-#         this trade.
-
-#         This can be used to track trades and apply conditional
-#         logic / subgroup analysis.
-
-#         See also `Order.tag`.
-#         """
-#         return self.__tag
-
-#     @property
-#     def _sl_order(self):
-#         return self.__sl_order
-
-#     @property
-#     def _tp_order(self):
-#         return self.__tp_order
-
-#     # Extra properties
-
-#     @property
-#     def entry_time(self) -> Union[pd.Timestamp, int]:
-#         """Datetime of when the trade was entered."""
-#         return self.__broker._data.index[self.__entry_time]
-
-#     @property
-#     def exit_time(self) -> Optional[Union[pd.Timestamp, int]]:
-#         """Datetime of when the trade was exited."""
-#         if self.__exit_time is None:
-#             return None
-#         return self.__broker._data.index[self.__entry_time]
-
-#     @property
-#     def is_long(self):
-#         """True if the trade is long (trade size is positive)."""
-#         return self.__size > 0
-
-#     @property
-#     def is_short(self):
-#         """True if the trade is short (trade size is negative)."""
-#         return not self.is_long
-
-#     @property
-#     def pl(self):
-#         if self.exit_price is not None:
-#             return self.size * (self.exit_price - self.entry_price)
-#         return 0
-
-#     @property
-#     def pl_pct(self):
-#         if self.exit_price is not None:
-#             return (self.exit_price / self.entry_price - 1) * 100
-#         return 0
-    
-#     # @property
-#     # def pl(self):
-#     #     """Trade profit (positive) or loss (negative) in cash units."""
-#     #     price = self.__exit_price or self.__broker.last_price
-#     #     return self.__size * (price - self.__entry_price)
-
-#     # @property
-#     # def pl_pct(self):
-#     #     """Trade profit (positive) or loss (negative) in percent."""
-#     #     price = self.__exit_price or self.__broker.last_price
-#     #     return copysign(1, self.__size) * (price / self.__entry_price - 1)
-
-#     @property
-#     def value(self):
-#         """Trade total value in cash (volume × price)."""
-#         price = self.__exit_price or self.__broker.last_price
-#         return abs(self.__size) * price
-
-#     # SL/TP management API
-
-#     @property
-#     def sl(self):
-#         """
-#         Stop-loss price at which to close the trade.
-
-#         This variable is writable. By assigning it a new price value,
-#         you create or modify the existing SL order.
-#         By assigning it `None`, you cancel it.
-#         """
-#         return self.__sl_order and self.__sl_order.stop
-
-#     @sl.setter
-#     def sl(self, price: float):
-#         self.__set_contingent('sl', price)
-
-#     @property
-#     def tp(self):
-#         """
-#         Take-profit price at which to close the trade.
-
-#         This property is writable. By assigning it a new price value,
-#         you create or modify the existing TP order.
-#         By assigning it `None`, you cancel it.
-#         """
-#         return self.__tp_order and self.__tp_order.limit
-
-#     @tp.setter
-#     def tp(self, price: float):
-#         self.__set_contingent('tp', price)
-
-#     def __set_contingent(self, type, price):
-#         assert type in ('sl', 'tp')
-#         assert price is None or 0 < price < np.inf
-#         attr = f'_{self.__class__.__qualname__}__{type}_order'
-#         order: Order = getattr(self, attr)
-#         if order:
-#             order.cancel()
-#         if price:
-#             kwargs = {'stop': price} if type == 'sl' else {'limit': price}
-#             order = self.__broker.new_order(-self.size, trade=self, tag=self.tag, **kwargs)
-#             setattr(self, attr, order)
     
 class Trade:
     """
@@ -764,6 +556,8 @@ class Trade:
         self.__tp_order: Optional[Order] = None
         self.__tag = tag
         self.__stock = stock
+
+        # print(stock,self.entry_time)
 
     def __repr__(self):
         return f'<Trade size={self.__size} time={self.__entry_bar}-{self.__exit_bar or ""} ' \
@@ -1016,6 +810,7 @@ class _Broker:
 
         is_long = size > 0
         adjusted_price = self._adjusted_price(size=size,stock=stock)
+        price = self.last_price(stock)
 
         if is_long:
             if not (sl or -np.inf) < (limit or stop or adjusted_price) < (tp or np.inf):
@@ -1033,6 +828,7 @@ class _Broker:
         # inserting SL/TP/trade-closing orders in-front
         if trade:
             self.orders.insert(0, order)
+            print('insert')
         else:
             # If exclusive orders (each new order auto-closes previous orders/position),
             # cancel all non-contingent orders and close all open trades beforehand
@@ -1040,9 +836,10 @@ class _Broker:
                 for o in self.orders:
                     if not o.is_contingent:
                         o.cancel()
-                for t in self.trades:
-                    t.close(t.stock)
+                # for t in self.trades:
+                #     t.close(t.stock)
             self.orders.append(order)
+            print('add order')
 
         self.update_position(stock, size, self.get_stock_price(stock))
 
@@ -1109,9 +906,6 @@ class _Broker:
                     return adjust_price
                 except:
                     continue
- 
-
-
     
     def last_price(self,stock) -> float:
         """ Price at the last (current) close. """
@@ -1142,6 +936,7 @@ class _Broker:
         # i = self._i = len(self._data.filtered_data) - 1
         i = self._i = self._data._get_length()
         self._process_orders()
+        self._process_trades()
         equity = self.update_equity(self._current_date)
         # self._equity[i] = equity
         
@@ -1151,6 +946,7 @@ class _Broker:
             for trade in self.trades:
                 price = self._data.filtered_data[self._data.filtered_data['stock']==trade.stock].Close.iloc[-1]
                 self._close_trade(trade, price, i)
+                print('test')
             self._cash = 0
             self._equity[i:] = 0
             raise _OutOfMoneyError
@@ -1169,8 +965,9 @@ class _Broker:
     def _process_orders(self):
         reprocess_orders = False
 
+        print(len(self.orders))
         # Process orders
-        for order in list(self.orders):  # type: Order
+        for order in list(self.orders): 
             data = self._data.filtered_data[self._data.filtered_data['stock']==order.stock]
             open, high, low = data['Open'].iloc[-1], data['High'].iloc[-1], data['Low'].iloc[-1]
 
@@ -1190,6 +987,7 @@ class _Broker:
 
                 # > When the stop price is reached, a stop order becomes a market/limit order.
                 # https://www.sec.gov/fast-answers/answersstopordhtm.html
+                # print(f'high : {high} stop_price : {stop_price}')
                 order._replace(stop_price=None)
             
             # Determine purchase price.
@@ -1219,25 +1017,25 @@ class _Broker:
             is_market_order = not order.limit and not stop_price
             time_index = (self._i - 1) if is_market_order and self._trade_on_close else self._i
             # If order is a SL/TP order, it should close an existing trade it was contingent upon
-            if order.parent_trade:
-                trade = order.parent_trade
-                _prev_size = trade.size
-                # If order.size is "greater" than trade.size, this order is a trade.close()
-                # order and part of the trade was already closed beforehand
-                size = copysign(min(abs(_prev_size), abs(order.size)), order.size)
-                # If this trade isn't already closed (e.g. on multiple `trade.close(.5)` calls)
-                if trade in self.trades:
-                    self._reduce_trade(trade, price, size, time_index)
-                    assert order.size != -_prev_size or trade not in self.trades
-                if order in (trade._sl_order,
-                             trade._tp_order):
-                    assert order.size == -trade.size
-                    assert order not in self.orders  # Removed when trade was closed
-                else:
-                    # It's a trade.close() order, now done
-                    assert abs(_prev_size) >= abs(size) >= 1
-                    self.orders.remove(order)
-                continue
+            # if order.parent_trade:
+            #     trade = order.parent_trade
+            #     _prev_size = trade.size
+            #     # If order.size is "greater" than trade.size, this order is a trade.close()
+            #     # order and part of the trade was already closed beforehand
+            #     size = copysign(min(abs(_prev_size), abs(order.size)), order.size)
+            #     # If this trade isn't already closed (e.g. on multiple `trade.close(.5)` calls)
+            #     if trade in self.trades:
+            #         self._reduce_trade(trade, price, size, time_index)
+            #         assert order.size != -_prev_size or trade not in self.trades
+            #     if order in (trade._sl_order,
+            #                  trade._tp_order):
+            #         assert order.size == -trade.size
+            #         assert order not in self.orders  # Removed when trade was closed
+            #     else:
+            #         # It's a trade.close() order, now done
+            #         assert abs(_prev_size) >= abs(size) >= 1
+            #         self.orders.remove(order)
+            #     continue
 
             # Else this is a stand-alone trade
 
@@ -1257,33 +1055,34 @@ class _Broker:
                     continue
             assert size == round(size)
             need_size = int(size)
-            if not self._hedging:
-                # Fill position by FIFO closing/reducing existing opposite-facing trades.
-                # Existing trades are closed at unadjusted price, because the adjustment
-                # was already made when buying.
-                for trade in list(self.trades):
-                    if trade.is_long == order.is_long:
-                        continue
-                    assert trade.size * order.size < 0
+            # if not self._hedging:
+            #     # Fill position by FIFO closing/reducing existing opposite-facing trades.
+            #     # Existing trades are closed at unadjusted price, because the adjustment
+            #     # was already made when buying.
+            #     for trade in list(self.trades):
+            #         if trade.is_long == order.is_long:
+            #             continue
+            #         assert trade.size * order.size < 0
 
-                    # Order size greater than this opposite-directed existing trade,
-                    # so it will be closed completely
-                    if abs(need_size) >= abs(trade.size):
-                        self._close_trade(trade, price, time_index)
-                        need_size += trade.size
-                    else:
-                        # The existing trade is larger than the new order,
-                        # so it will only be closed partially
-                        self._reduce_trade(trade, price, need_size, time_index)
-                        need_size = 0
+            #         # Order size greater than this opposite-directed existing trade,
+            #         # so it will be closed completely
+            #         if abs(need_size) >= abs(trade.size):
+            #             self._close_trade(trade, price, time_index)
+            #             need_size += trade.size
+            #         else:
+            #             # The existing trade is larger than the new order,
+            #             # so it will only be closed partially
+            #             self._reduce_trade(trade, price, need_size, time_index)
+            #             need_size = 0
 
-                    if not need_size:
-                        break
-                    
+            #         if not need_size:
+            #             break
+
             # If we don't have enough liquidity to cover for the order, cancel it
             if abs(need_size) * adjusted_price > self.margin_available * self._leverage:
                 self.orders.remove(order)
                 continue
+
 
             # Open a new trade
             if need_size:
@@ -1314,14 +1113,47 @@ class _Broker:
                             UserWarning)
 
             # Order processed
-            self.orders.remove(order)
 
-        if reprocess_orders:
-            self._process_orders()
+            self.orders.remove(order)
+            
+        # if reprocess_orders:
+        #     self._process_orders()
+        self.orders = []
+
+    def _process_trades(self):
+        
+        # Process trades
+        for trade in list(self.trades): 
+            # print('entry_price: ',str(trade.entry_price))
+            data = self._data.filtered_data[self._data.filtered_data['stock']==trade.stock]
+            open, high, low = data['Open'].iloc[-1], data['High'].iloc[-1], data['Low'].iloc[-1]
+
+            # Related SL/TP order was already removed
+            if trade not in self.trades:
+                continue
+            time_index = self._i
+            #  检查止损条件是否触发
+            if  (low <= trade.entry_price * 0.8):
+                # 执行止损交易，平仓
+                # 你可能需要根据你的实际情况来调整这里的执行逻辑
+                print('sl')
+                self._close_trade(trade, trade.entry_price * 0.8,time_index)
+                print('sl ok')
+
+            # 检查止盈条件是否触发
+
+            if (high >= trade.entry_price * 1.2):
+                # 执行止盈交易，平仓
+                # 同样，根据实际情况调整
+                print('tp')
+                self._close_trade(trade, trade.entry_price * 1.2,time_index)
+                print('tp ok')
 
     def _reduce_trade(self, trade: Trade, price: float, size: float, time_index):
         assert trade.size * size < 0
         assert abs(trade.size) >= abs(size)
+
+        print('reduce')
 
         size_left = trade.size + size
         assert size_left * trade.size >= 0
@@ -1342,6 +1174,7 @@ class _Broker:
         self._close_trade(close_trade, price, time_index)
 
     def _close_trade(self, trade: Trade, price: float, time_index):
+        print('close trade')
         self.trades.remove(trade)
         if trade._sl_order:
             self.orders.remove(trade._sl_order)
@@ -1634,7 +1467,6 @@ class Backtest:
             
         with np.errstate(invalid='ignore'):
             i = 0
-            print('progress is now: ',i / progress_len)
             for current_date in self._all_dates:
                 if ((i -1) / progress_len < 0.2) and (i / progress_len > 0.2):
                     print('progress is now 20 %')
@@ -1643,10 +1475,11 @@ class Backtest:
                 elif((i -1) / progress_len < 0.6) and (i / progress_len > 0.6):
                     print('progress is now 60 %')
                 elif((i -1) / progress_len < 0.8) and (i / progress_len > 0.8):
-                    print('progress is now 40 %')
+                    print('progress is now 80 %')
                 elif((i -1) / progress_len < 1) and (i / progress_len == 1):
                     print("progress is 100% complete")
                 # 选择当前批次的数据
+                print(current_date)
                 # current_batch = self._data.loc[self._data['date'].between(start_date, end_date)]
                 current_batch = self._data.loc[self._data['date']==current_date].compute()
                 
