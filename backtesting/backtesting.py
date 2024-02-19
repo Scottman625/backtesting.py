@@ -1190,7 +1190,6 @@ class _Broker:
 
                 # > When the stop price is reached, a stop order becomes a market/limit order.
                 # https://www.sec.gov/fast-answers/answersstopordhtm.html
-                print('d')
                 order._replace(stop_price=None)
             
             # Determine purchase price.
@@ -1205,14 +1204,12 @@ class _Broker:
                                              else order.limit > (stop_price or np.inf)))
                 if not is_limit_hit or is_limit_hit_before_stop:
                     continue
-                print('e')
                 # stop_price, if set, was hit within this bar
                 price = (min(stop_price or open, order.limit)
                          if order.is_long else
                          max(stop_price or open, order.limit))
             else:
                 # Market-if-touched / market order
-                print('f')
                 price = prev_close if self._trade_on_close else open
                 price = (max(price, stop_price or -np.inf)
                          if order.is_long else
@@ -1221,10 +1218,8 @@ class _Broker:
             # Determine entry/exit bar index
             is_market_order = not order.limit and not stop_price
             time_index = (self._i - 1) if is_market_order and self._trade_on_close else self._i
-            print('g')
             # If order is a SL/TP order, it should close an existing trade it was contingent upon
             if order.parent_trade:
-                print('h')
                 trade = order.parent_trade
                 _prev_size = trade.size
                 # If order.size is "greater" than trade.size, this order is a trade.close()
@@ -1238,12 +1233,10 @@ class _Broker:
                              trade._tp_order):
                     assert order.size == -trade.size
                     assert order not in self.orders  # Removed when trade was closed
-                    print('i')
                 else:
                     # It's a trade.close() order, now done
                     assert abs(_prev_size) >= abs(size) >= 1
                     self.orders.remove(order)
-                    print('j')
                 continue
 
             # Else this is a stand-alone trade
@@ -1264,13 +1257,11 @@ class _Broker:
                     continue
             assert size == round(size)
             need_size = int(size)
-            print(self._hedging)
             if not self._hedging:
                 # Fill position by FIFO closing/reducing existing opposite-facing trades.
                 # Existing trades are closed at unadjusted price, because the adjustment
                 # was already made when buying.
                 for trade in list(self.trades):
-                    print(trade)
                     if trade.is_long == order.is_long:
                         continue
                     assert trade.size * order.size < 0
@@ -1278,11 +1269,9 @@ class _Broker:
                     # Order size greater than this opposite-directed existing trade,
                     # so it will be closed completely
                     if abs(need_size) >= abs(trade.size):
-                        print('aaa')
                         self._close_trade(trade, price, time_index)
                         need_size += trade.size
                     else:
-                        print('bbb')
                         # The existing trade is larger than the new order,
                         # so it will only be closed partially
                         self._reduce_trade(trade, price, need_size, time_index)
@@ -1291,7 +1280,6 @@ class _Broker:
                     if not need_size:
                         break
             else:
-                print('test hedging')
             # If we don't have enough liquidity to cover for the order, cancel it
             if abs(need_size) * adjusted_price > self.margin_available * self._leverage:
                 self.orders.remove(order)
@@ -1359,9 +1347,7 @@ class _Broker:
             self.orders.remove(trade._sl_order)
         if trade._tp_order:
             self.orders.remove(trade._tp_order)
-        print('test aa')
         self.closed_trades.append(trade._replace(exit_price=price, exit_bar=time_index))
-        print('test bb')
         self._cash += trade.pl
 
     def _open_trade(self, price: float, size: int,
