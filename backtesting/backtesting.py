@@ -643,10 +643,10 @@ class Trade:
         # 直接计算所需位置的索引值
         # 假设self.__entry_bar是入场位置的整数索引
         entry_bar_value = self.__entry_bar
-        df_pandas = self.__broker._data.__getdata__().date.compute()
+        unique_dates = self.__broker._data.__getdata__()['date'].compute().unique()
 
         # 使用Pandas的`.iloc`进行行选择
-        entry_time_date = df_pandas.iloc[entry_bar_value]
+        entry_time_date = unique_dates[entry_bar_value]
         return entry_time_date
 
 
@@ -659,15 +659,15 @@ class Trade:
 
         # 假设self.__entry_bar是入场位置的整数索引
         exit_bar_value = self.__exit_bar
-        df_pandas = self.__broker._data.__getdata__().date.compute()
+        unique_dates = self.__broker._data.__getdata__()['date'].compute().unique()
 
         # 使用Pandas的`.iloc`进行行选择
         try:
-            exit_time_date = df_pandas.iloc[exit_bar_value]
+            exit_time_date = unique_dates[exit_bar_value]
             return exit_time_date
         except:
             print("exit_bar_value:", exit_bar_value)
-            print("Length of df_pandas:", len(df_pandas))
+            print("Length of df_pandas:", len(unique_dates))
 
 
     @property
@@ -758,6 +758,9 @@ class _Broker:
         self._trade_on_close = trade_on_close
         self._hedging = hedging
         self._exclusive_orders = exclusive_orders
+
+        unique_dates = self._data.__getdata__()['date'].compute().unique()
+        print(f'df_pandas: {unique_dates}')
 
         # 假设 self._data.df['date'] 是包含日期时间戳的列
         myData = self._data.__getdata__()
@@ -965,7 +968,6 @@ class _Broker:
     def _process_orders(self):
         reprocess_orders = False
 
-        print(len(self.orders))
         # Process orders
         for order in list(self.orders): 
             data = self._data.filtered_data[self._data.filtered_data['stock']==order.stock]
@@ -1136,18 +1138,14 @@ class _Broker:
             if  (low <= trade.entry_price * 0.8):
                 # 执行止损交易，平仓
                 # 你可能需要根据你的实际情况来调整这里的执行逻辑
-                print('sl')
                 self._close_trade(trade, trade.entry_price * 0.8,time_index)
-                print('sl ok')
 
             # 检查止盈条件是否触发
 
             if (high >= trade.entry_price * 1.2):
                 # 执行止盈交易，平仓
                 # 同样，根据实际情况调整
-                print('tp')
                 self._close_trade(trade, trade.entry_price * 1.2,time_index)
-                print('tp ok')
 
     def _reduce_trade(self, trade: Trade, price: float, size: float, time_index):
         assert trade.size * size < 0
@@ -1479,7 +1477,6 @@ class Backtest:
                 elif((i -1) / progress_len < 1) and (i / progress_len == 1):
                     print("progress is 100% complete")
                 # 选择当前批次的数据
-                print(current_date)
                 # current_batch = self._data.loc[self._data['date'].between(start_date, end_date)]
                 current_batch = self._data.loc[self._data['date']==current_date].compute()
                 
@@ -1515,7 +1512,7 @@ class Backtest:
 
             equity = pd.Series(broker._equity).bfill().fillna(broker._cash).values
 
-            print(equity)
+            print(len(equity))
 
             self._results = compute_stats(
                 trades=broker.closed_trades,
