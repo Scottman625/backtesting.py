@@ -1279,7 +1279,7 @@ class _Broker:
 
                     if not need_size:
                         break
-            else:
+                    
             # If we don't have enough liquidity to cover for the order, cancel it
             if abs(need_size) * adjusted_price > self.margin_available * self._leverage:
                 self.orders.remove(order)
