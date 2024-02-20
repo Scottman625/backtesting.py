@@ -692,10 +692,10 @@ class Trade:
         price = self.__exit_price or self.__broker.last_price(self.__stock)
         return copysign(1, self.__size) * (price / self.__entry_price - 1)
 
-    @property
-    def value(self):
+    
+    def value(self, stock):
         """Trade total value in cash (volume × price)."""
-        price = self.__exit_price or self.__broker.last_price(self.__stock)
+        price = self.__exit_price or self.__broker.last_price(stock)
         return abs(self.__size) * price
 
     # SL/TP management API
@@ -925,10 +925,10 @@ class _Broker:
     def equity(self) -> float:
         return self._cash + sum(trade.pl for trade in self.trades)
 
-    @property
-    def margin_available(self) -> float:
+    
+    def margin_available(self, stock) -> float:
         # From https://github.com/QuantConnect/Lean/pull/3768
-        margin_used = sum(trade.value / self._leverage for trade in self.trades)
+        margin_used = sum(trade.value(stock) / self._leverage for trade in self.trades)
         return max(0, self.equity - margin_used)
 
     def next(self):
@@ -939,7 +939,7 @@ class _Broker:
         # i = self._i = len(self._data.filtered_data) - 1
         i = self._i = self._data._get_length()
         self._process_orders()
-        self._process_trades()
+        # self._process_trades()
         equity = self.update_equity(self._current_date)
         # self._equity[i] = equity
         
@@ -1019,25 +1019,25 @@ class _Broker:
             is_market_order = not order.limit and not stop_price
             time_index = (self._i - 1) if is_market_order and self._trade_on_close else self._i
             # If order is a SL/TP order, it should close an existing trade it was contingent upon
-            # if order.parent_trade:
-            #     trade = order.parent_trade
-            #     _prev_size = trade.size
-            #     # If order.size is "greater" than trade.size, this order is a trade.close()
-            #     # order and part of the trade was already closed beforehand
-            #     size = copysign(min(abs(_prev_size), abs(order.size)), order.size)
-            #     # If this trade isn't already closed (e.g. on multiple `trade.close(.5)` calls)
-            #     if trade in self.trades:
-            #         self._reduce_trade(trade, price, size, time_index)
-            #         assert order.size != -_prev_size or trade not in self.trades
-            #     if order in (trade._sl_order,
-            #                  trade._tp_order):
-            #         assert order.size == -trade.size
-            #         assert order not in self.orders  # Removed when trade was closed
-            #     else:
-            #         # It's a trade.close() order, now done
-            #         assert abs(_prev_size) >= abs(size) >= 1
-            #         self.orders.remove(order)
-            #     continue
+            if order.parent_trade:
+                trade = order.parent_trade
+                _prev_size = trade.size
+                # If order.size is "greater" than trade.size, this order is a trade.close()
+                # order and part of the trade was already closed beforehand
+                size = copysign(min(abs(_prev_size), abs(order.size)), order.size)
+                # If this trade isn't already closed (e.g. on multiple `trade.close(.5)` calls)
+                if trade in self.trades:
+                    self._reduce_trade(trade, price, size, time_index)
+                    assert order.size != -_prev_size or trade not in self.trades
+                if order in (trade._sl_order,
+                             trade._tp_order):
+                    assert order.size == -trade.size
+                    assert order not in self.orders  # Removed when trade was closed
+                else:
+                    # It's a trade.close() order, now done
+                    assert abs(_prev_size) >= abs(size) >= 1
+                    self.orders.remove(order)
+                continue
 
             # Else this is a stand-alone trade
 
@@ -1049,7 +1049,7 @@ class _Broker:
             # precompute true size in units, accounting for margin and spread/commissions
             size = order.size
             if -1 < size < 1:
-                size = copysign(int((self.margin_available * self._leverage * abs(size))
+                size = copysign(int((self.margin_available(order.stock) * self._leverage * abs(size))
                                     // adjusted_price), size)
                 # Not enough cash/margin even for a single unit
                 if not size:
@@ -1057,31 +1057,31 @@ class _Broker:
                     continue
             assert size == round(size)
             need_size = int(size)
-            # if not self._hedging:
-            #     # Fill position by FIFO closing/reducing existing opposite-facing trades.
-            #     # Existing trades are closed at unadjusted price, because the adjustment
-            #     # was already made when buying.
-            #     for trade in list(self.trades):
-            #         if trade.is_long == order.is_long:
-            #             continue
-            #         assert trade.size * order.size < 0
+            if not self._hedging:
+                # Fill position by FIFO closing/reducing existing opposite-facing trades.
+                # Existing trades are closed at unadjusted price, because the adjustment
+                # was already made when buying.
+                for trade in list(self.trades):
+                    if trade.is_long == order.is_long:
+                        continue
+                    assert trade.size * order.size < 0
 
-            #         # Order size greater than this opposite-directed existing trade,
-            #         # so it will be closed completely
-            #         if abs(need_size) >= abs(trade.size):
-            #             self._close_trade(trade, price, time_index)
-            #             need_size += trade.size
-            #         else:
-            #             # The existing trade is larger than the new order,
-            #             # so it will only be closed partially
-            #             self._reduce_trade(trade, price, need_size, time_index)
-            #             need_size = 0
+                    # Order size greater than this opposite-directed existing trade,
+                    # so it will be closed completely
+                    if abs(need_size) >= abs(trade.size):
+                        self._close_trade(trade, price, time_index)
+                        need_size += trade.size
+                    else:
+                        # The existing trade is larger than the new order,
+                        # so it will only be closed partially
+                        self._reduce_trade(trade, price, need_size, time_index)
+                        need_size = 0
 
-            #         if not need_size:
-            #             break
+                    if not need_size:
+                        break
 
             # If we don't have enough liquidity to cover for the order, cancel it
-            if abs(need_size) * adjusted_price > self.margin_available * self._leverage:
+            if abs(need_size) * adjusted_price > self.margin_available(order.stock) * self._leverage:
                 self.orders.remove(order)
                 continue
 
@@ -1118,9 +1118,9 @@ class _Broker:
 
             self.orders.remove(order)
             
-        # if reprocess_orders:
-        #     self._process_orders()
-        self.orders = []
+        if reprocess_orders:
+            self._process_orders()
+        # self.orders = []
 
     def _process_trades(self):
         
@@ -1172,14 +1172,17 @@ class _Broker:
         self._close_trade(close_trade, price, time_index)
 
     def _close_trade(self, trade: Trade, price: float, time_index):
-        print('close trade')
-        self.trades.remove(trade)
-        if trade._sl_order:
-            self.orders.remove(trade._sl_order)
-        if trade._tp_order:
-            self.orders.remove(trade._tp_order)
-        self.closed_trades.append(trade._replace(exit_price=price, exit_bar=time_index))
-        self._cash += trade.pl
+        print('close_trade')
+        try:
+            self.trades.remove(trade)
+            if trade._sl_order:
+                self.orders.remove(trade._sl_order)
+            if trade._tp_order:
+                self.orders.remove(trade._tp_order)
+            self.closed_trades.append(trade._replace(exit_price=price, exit_bar=time_index))
+            self._cash += trade.pl
+        except Exception as e:
+            print(e)
 
     def _open_trade(self, price: float, size: int,
                     sl: Optional[float], tp: Optional[float], time_index, tag, stock):
