@@ -686,6 +686,7 @@ class Trade:
         price = self.__exit_price or self.__broker.last_price(self.__stock)
         return self.__size * (price - self.__entry_price)
 
+
     @property
     def pl_pct(self):
         """Trade profit (positive) or loss (negative) in percent."""
@@ -912,7 +913,10 @@ class _Broker:
     
     def last_price(self,stock) -> float:
         """ Price at the last (current) close. """
-        return self._data.filtered_data[self._data.filtered_data['stock']==stock].Close.iloc[-1]
+        try:
+            return self._data.filtered_data[self._data.filtered_data['stock']==stock].Close.iloc[-1]
+        except:
+            print(self._data.filtered_data[self._data.filtered_data['stock']==stock].Close)
 
     def _adjusted_price(self,stock, size=None, price=None) -> float:
         """
@@ -1081,9 +1085,12 @@ class _Broker:
                         break
 
             # If we don't have enough liquidity to cover for the order, cancel it
-            if abs(need_size) * adjusted_price > self.margin_available(order.stock) * self._leverage:
-                self.orders.remove(order)
-                continue
+            try:
+                if abs(need_size) * adjusted_price > self.margin_available(order.stock) * self._leverage:
+                    self.orders.remove(order)
+                    continue
+            except:
+                pass
 
 
             # Open a new trade
@@ -1469,16 +1476,17 @@ class Backtest:
         with np.errstate(invalid='ignore'):
             i = 0
             for current_date in self._all_dates:
-                if ((i -1) / progress_len < 0.2) and (i / progress_len > 0.2):
-                    print('progress is now 20 %')
-                elif((i -1) / progress_len < 0.4) and (i / progress_len > 0.4):
-                    print('progress is now 40 %')
-                elif((i -1) / progress_len < 0.6) and (i / progress_len > 0.6):
-                    print('progress is now 60 %')
-                elif((i -1) / progress_len < 0.8) and (i / progress_len > 0.8):
-                    print('progress is now 80 %')
-                elif((i -1) / progress_len < 1) and (i / progress_len == 1):
-                    print("progress is 100% complete")
+                # if ((i -1) / progress_len < 0.2) and (i / progress_len > 0.2):
+                #     print('progress is now 20 %')
+                # elif((i -1) / progress_len < 0.4) and (i / progress_len > 0.4):
+                #     print('progress is now 40 %')
+                # elif((i -1) / progress_len < 0.6) and (i / progress_len > 0.6):
+                #     print('progress is now 60 %')
+                # elif((i -1) / progress_len < 0.8) and (i / progress_len > 0.8):
+                #     print('progress is now 80 %')
+                # elif((i -1) / progress_len < 1) and (i / progress_len == 1):
+                #     print("progress is 100% complete")
+                # print(current_date)
                 # 选择当前批次的数据
                 # current_batch = self._data.loc[self._data['date'].between(start_date, end_date)]
                 current_batch = self._data.loc[self._data['date']==current_date].compute()
