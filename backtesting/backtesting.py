@@ -24,6 +24,8 @@ import pandas as pd
 from numpy.random import default_rng
 
 from dask import dataframe as dd
+from dask import delayed, compute
+import dask
 
 
 try:
@@ -740,7 +742,7 @@ class Trade:
             order.cancel()
         if price:
             kwargs = {'stop': price} if type == 'sl' else {'limit': price}
-            order = self.__broker.new_order(-self.size,stock=self.__stock, trade=self, tag=self.tag, **kwargs)
+            order, _  = self.__broker.new_order(-self.size,stock=self.__stock, trade=self, tag=self.tag, **kwargs)
             setattr(self, attr, order)
 
 
@@ -814,7 +816,7 @@ class _Broker:
 
         is_long = size > 0
         adjusted_price = self._adjusted_price(size=size,stock=stock)
-        price = self.last_price(stock)
+        # price = self.last_price(stock)
 
         if is_long:
             if not (sl or -np.inf) < (limit or stop or adjusted_price) < (tp or np.inf):
@@ -831,8 +833,8 @@ class _Broker:
         # Put the new order in the order queue,
         # inserting SL/TP/trade-closing orders in-front
         if trade:
-            self.orders.insert(0, order)
-            print('insert')
+            # self.orders.insert(0, order)
+            return order, 0
         else:
             # If exclusive orders (each new order auto-closes previous orders/position),
             # cancel all non-contingent orders and close all open trades beforehand
@@ -840,14 +842,14 @@ class _Broker:
                 for o in self.orders:
                     if not o.is_contingent:
                         o.cancel()
-                # for t in self.trades:
-                #     t.close(t.stock)
-            self.orders.append(order)
-            print('add order')
+                for t in self.trades:
+                    t.close(t.stock)
+            # self.orders.append(order)
+            return order, 1
 
-        self.update_position(stock, size, self.get_stock_price(stock))
+        # self.update_position(stock, size, self.get_stock_price(stock))
 
-        return order
+        # return order, 1
     
     def update_position(self, stock, size, price):
         if stock in self.positions:
@@ -943,7 +945,7 @@ class _Broker:
         # i = self._i = len(self._data.filtered_data) - 1
         i = self._i = self._data._get_length()
         self._process_orders()
-        # self._process_trades()
+        self._process_trades()
         equity = self.update_equity(self._current_date)
         # self._equity[i] = equity
         
@@ -974,154 +976,157 @@ class _Broker:
 
         # Process orders
         for order in list(self.orders): 
-            data = self._data.filtered_data[self._data.filtered_data['stock']==order.stock]
-            open, high, low = data['Open'].iloc[-1], data['High'].iloc[-1], data['Low'].iloc[-1]
-
-            if len(data) > 1:
-                prev_close = data['Close'].iloc[-2]
-            
-            # Related SL/TP order was already removed
-            if order not in self.orders:
-                continue
-
-            # Check if stop condition was hit
-            stop_price = order.stop
-            if stop_price:
-                is_stop_hit = ((high > stop_price) if order.is_long else (low < stop_price))
-                if not is_stop_hit:
-                    continue
-
-                # > When the stop price is reached, a stop order becomes a market/limit order.
-                # https://www.sec.gov/fast-answers/answersstopordhtm.html
-                # print(f'high : {high} stop_price : {stop_price}')
-                order._replace(stop_price=None)
-            
-            # Determine purchase price.
-            # Check if limit order can be filled.
-            if order.limit:
-                is_limit_hit = low < order.limit if order.is_long else high > order.limit
-                # When stop and limit are hit within the same bar, we pessimistically
-                # assume limit was hit before the stop (i.e. "before it counts")
-                is_limit_hit_before_stop = (is_limit_hit and
-                                            (order.limit < (stop_price or -np.inf)
-                                             if order.is_long
-                                             else order.limit > (stop_price or np.inf)))
-                if not is_limit_hit or is_limit_hit_before_stop:
-                    continue
-                # stop_price, if set, was hit within this bar
-                price = (min(stop_price or open, order.limit)
-                         if order.is_long else
-                         max(stop_price or open, order.limit))
-            else:
-                # Market-if-touched / market order
-                price = prev_close if self._trade_on_close else open
-                price = (max(price, stop_price or -np.inf)
-                         if order.is_long else
-                         min(price, stop_price or np.inf))
-
-            # Determine entry/exit bar index
-            is_market_order = not order.limit and not stop_price
-            time_index = (self._i - 1) if is_market_order and self._trade_on_close else self._i
-            # If order is a SL/TP order, it should close an existing trade it was contingent upon
-            if order.parent_trade:
-                trade = order.parent_trade
-                _prev_size = trade.size
-                # If order.size is "greater" than trade.size, this order is a trade.close()
-                # order and part of the trade was already closed beforehand
-                size = copysign(min(abs(_prev_size), abs(order.size)), order.size)
-                # If this trade isn't already closed (e.g. on multiple `trade.close(.5)` calls)
-                if trade in self.trades:
-                    self._reduce_trade(trade, price, size, time_index)
-                    assert order.size != -_prev_size or trade not in self.trades
-                if order in (trade._sl_order,
-                             trade._tp_order):
-                    assert order.size == -trade.size
-                    assert order not in self.orders  # Removed when trade was closed
-                else:
-                    # It's a trade.close() order, now done
-                    assert abs(_prev_size) >= abs(size) >= 1
-                    self.orders.remove(order)
-                continue
-
-            # Else this is a stand-alone trade
-
-            # Adjust price to include commission (or bid-ask spread).
-            # In long positions, the adjusted price is a fraction higher, and vice versa.
-            adjusted_price = self._adjusted_price(stock=order.stock,size=order.size, price=price )
-
-            # If order size was specified proportionally,
-            # precompute true size in units, accounting for margin and spread/commissions
-            size = order.size
-            if -1 < size < 1:
-                size = copysign(int((self.margin_available(order.stock) * self._leverage * abs(size))
-                                    // adjusted_price), size)
-                # Not enough cash/margin even for a single unit
-                if not size:
-                    self.orders.remove(order)
-                    continue
-            assert size == round(size)
-            need_size = int(size)
-            if not self._hedging:
-                # Fill position by FIFO closing/reducing existing opposite-facing trades.
-                # Existing trades are closed at unadjusted price, because the adjustment
-                # was already made when buying.
-                for trade in list(self.trades):
-                    if trade.is_long == order.is_long:
-                        continue
-                    assert trade.size * order.size < 0
-
-                    # Order size greater than this opposite-directed existing trade,
-                    # so it will be closed completely
-                    if abs(need_size) >= abs(trade.size):
-                        self._close_trade(trade, price, time_index)
-                        need_size += trade.size
-                    else:
-                        # The existing trade is larger than the new order,
-                        # so it will only be closed partially
-                        self._reduce_trade(trade, price, need_size, time_index)
-                        need_size = 0
-
-                    if not need_size:
-                        break
-
-            # If we don't have enough liquidity to cover for the order, cancel it
             try:
-                if abs(need_size) * adjusted_price > self.margin_available(order.stock) * self._leverage:
-                    self.orders.remove(order)
+                data = self._data.filtered_data[self._data.filtered_data['stock']==order.stock]
+                open, high, low = data['Open'].iloc[-1], data['High'].iloc[-1], data['Low'].iloc[-1]
+
+                if len(data) > 1:
+                    prev_close = data['Close'].iloc[-2]
+                
+                # Related SL/TP order was already removed
+                if order not in self.orders:
                     continue
-            except:
-                pass
+
+                # Check if stop condition was hit
+                stop_price = order.stop
+                if stop_price:
+                    is_stop_hit = ((high > stop_price) if order.is_long else (low < stop_price))
+                    if not is_stop_hit:
+                        continue
+
+                    # > When the stop price is reached, a stop order becomes a market/limit order.
+                    # https://www.sec.gov/fast-answers/answersstopordhtm.html
+                    # print(f'high : {high} stop_price : {stop_price}')
+                    order._replace(stop_price=None)
+                
+                # Determine purchase price.
+                # Check if limit order can be filled.
+                if order.limit:
+                    is_limit_hit = low < order.limit if order.is_long else high > order.limit
+                    # When stop and limit are hit within the same bar, we pessimistically
+                    # assume limit was hit before the stop (i.e. "before it counts")
+                    is_limit_hit_before_stop = (is_limit_hit and
+                                                (order.limit < (stop_price or -np.inf)
+                                                if order.is_long
+                                                else order.limit > (stop_price or np.inf)))
+                    if not is_limit_hit or is_limit_hit_before_stop:
+                        continue
+                    # stop_price, if set, was hit within this bar
+                    price = (min(stop_price or open, order.limit)
+                            if order.is_long else
+                            max(stop_price or open, order.limit))
+                else:
+                    # Market-if-touched / market order
+                    price = prev_close if self._trade_on_close else open
+                    price = (max(price, stop_price or -np.inf)
+                            if order.is_long else
+                            min(price, stop_price or np.inf))
+
+                # Determine entry/exit bar index
+                is_market_order = not order.limit and not stop_price
+                time_index = (self._i - 1) if is_market_order and self._trade_on_close else self._i
+                # If order is a SL/TP order, it should close an existing trade it was contingent upon
+                if order.parent_trade:
+                    trade = order.parent_trade
+                    _prev_size = trade.size
+                    # If order.size is "greater" than trade.size, this order is a trade.close()
+                    # order and part of the trade was already closed beforehand
+                    size = copysign(min(abs(_prev_size), abs(order.size)), order.size)
+                    # If this trade isn't already closed (e.g. on multiple `trade.close(.5)` calls)
+                    if trade in self.trades:
+                        self._reduce_trade(trade, price, size, time_index)
+                        assert order.size != -_prev_size or trade not in self.trades
+                    if order in (trade._sl_order,
+                                trade._tp_order):
+                        assert order.size == -trade.size
+                        assert order not in self.orders  # Removed when trade was closed
+                    else:
+                        # It's a trade.close() order, now done
+                        assert abs(_prev_size) >= abs(size) >= 1
+                        self.orders.remove(order)
+                    continue
+
+                # Else this is a stand-alone trade
+
+                # Adjust price to include commission (or bid-ask spread).
+                # In long positions, the adjusted price is a fraction higher, and vice versa.
+                adjusted_price = self._adjusted_price(stock=order.stock,size=order.size, price=price )
+
+                # If order size was specified proportionally,
+                # precompute true size in units, accounting for margin and spread/commissions
+                size = order.size
+                if -1 < size < 1:
+                    size = copysign(int((self.margin_available(order.stock) * self._leverage * abs(size))
+                                        // adjusted_price), size)
+                    # Not enough cash/margin even for a single unit
+                    if not size:
+                        self.orders.remove(order)
+                        continue
+                assert size == round(size)
+                need_size = int(size)
+                if not self._hedging:
+                    # Fill position by FIFO closing/reducing existing opposite-facing trades.
+                    # Existing trades are closed at unadjusted price, because the adjustment
+                    # was already made when buying.
+                    for trade in list(self.trades):
+                        if trade.is_long == order.is_long:
+                            continue
+                        assert trade.size * order.size < 0
+
+                        # Order size greater than this opposite-directed existing trade,
+                        # so it will be closed completely
+                        if abs(need_size) >= abs(trade.size):
+                            self._close_trade(trade, price, time_index)
+                            need_size += trade.size
+                        else:
+                            # The existing trade is larger than the new order,
+                            # so it will only be closed partially
+                            self._reduce_trade(trade, price, need_size, time_index)
+                            need_size = 0
+
+                        if not need_size:
+                            break
+
+                # If we don't have enough liquidity to cover for the order, cancel it
+                try:
+                    if abs(need_size) * adjusted_price > self.margin_available(order.stock) * self._leverage:
+                        self.orders.remove(order)
+                        continue
+                except:
+                    pass
 
 
-            # Open a new trade
-            if need_size:
-                self._open_trade(price=adjusted_price,
-                                 size=need_size,
-                                 sl=order.sl,
-                                 tp=order.tp,
-                                 time_index=time_index,
-                                 tag=order.tag,
-                                 stock=order.stock)
+                # Open a new trade
+                if need_size:
+                    self._open_trade(price=adjusted_price,
+                                    size=need_size,
+                                    sl=order.sl,
+                                    tp=order.tp,
+                                    time_index=time_index,
+                                    tag=order.tag,
+                                    stock=order.stock)
 
-                # We need to reprocess the SL/TP orders newly added to the queue.
-                # This allows e.g. SL hitting in the same bar the order was open.
-                # See https://github.com/kernc/backtesting.py/issues/119
-                if order.sl or order.tp:
-                    if is_market_order:
-                        reprocess_orders = True
-                    elif (low <= (order.sl or -np.inf) <= high or
-                          low <= (order.tp or -np.inf) <= high):
-                        warnings.warn(
-                            f"({data.index[-1]}) A contingent SL/TP order would execute in the "
-                            "same bar its parent stop/limit order was turned into a trade. "
-                            "Since we can't assert the precise intra-candle "
-                            "price movement, the affected SL/TP order will instead be executed on "
-                            "the next (matching) price/bar, making the result (of this trade) "
-                            "somewhat dubious. "
-                            "See https://github.com/kernc/backtesting.py/issues/119",
-                            UserWarning)
+                    # We need to reprocess the SL/TP orders newly added to the queue.
+                    # This allows e.g. SL hitting in the same bar the order was open.
+                    # See https://github.com/kernc/backtesting.py/issues/119
+                    if order.sl or order.tp:
+                        if is_market_order:
+                            reprocess_orders = True
+                        elif (low <= (order.sl or -np.inf) <= high or
+                            low <= (order.tp or -np.inf) <= high):
+                            warnings.warn(
+                                f"({data.index[-1]}) A contingent SL/TP order would execute in the "
+                                "same bar its parent stop/limit order was turned into a trade. "
+                                "Since we can't assert the precise intra-candle "
+                                "price movement, the affected SL/TP order will instead be executed on "
+                                "the next (matching) price/bar, making the result (of this trade) "
+                                "somewhat dubious. "
+                                "See https://github.com/kernc/backtesting.py/issues/119",
+                                UserWarning)
 
             # Order processed
+            except Exception as e:
+                print(f'error : {e}')
 
             self.orders.remove(order)
             
@@ -1134,25 +1139,28 @@ class _Broker:
         # Process trades
         for trade in list(self.trades): 
             # print('entry_price: ',str(trade.entry_price))
-            data = self._data.filtered_data[self._data.filtered_data['stock']==trade.stock]
-            open, high, low = data['Open'].iloc[-1], data['High'].iloc[-1], data['Low'].iloc[-1]
+            try:
+                data = self._data.filtered_data[self._data.filtered_data['stock']==trade.stock]
+                open, high, low = data['Open'].iloc[-1], data['High'].iloc[-1], data['Low'].iloc[-1]
 
-            # Related SL/TP order was already removed
-            if trade not in self.trades:
-                continue
-            time_index = self._i
-            #  检查止损条件是否触发
-            if  (low <= trade.entry_price * 0.8):
-                # 执行止损交易，平仓
-                # 你可能需要根据你的实际情况来调整这里的执行逻辑
-                self._close_trade(trade, trade.entry_price * 0.8,time_index)
+                # Related SL/TP order was already removed
+                if trade not in self.trades:
+                    continue
+                time_index = self._i
+                #  检查止损条件是否触发
+                if  (low <= trade.sl):
+                    # 执行止损交易，平仓
+                    # 你可能需要根据你的实际情况来调整这里的执行逻辑
+                    self._close_trade(trade, trade.sl,time_index)
 
-            # 检查止盈条件是否触发
+                # 检查止盈条件是否触发
 
-            if (high >= trade.entry_price * 1.2):
-                # 执行止盈交易，平仓
-                # 同样，根据实际情况调整
-                self._close_trade(trade, trade.entry_price * 1.2,time_index)
+                if (high >= trade.tp):
+                    # 执行止盈交易，平仓
+                    # 同样，根据实际情况调整
+                    self._close_trade(trade, trade.tp,time_index)
+            except Exception as e:
+                print(f'error : {e}')
 
     def _reduce_trade(self, trade: Trade, price: float, size: float, time_index):
         assert trade.size * size < 0
@@ -1179,22 +1187,25 @@ class _Broker:
         self._close_trade(close_trade, price, time_index)
 
     def _close_trade(self, trade: Trade, price: float, time_index):
-        print('close_trade')
-        try:
+        print('close trade')
+        if trade in self.trades:
             self.trades.remove(trade)
-            if trade._sl_order:
-                self.orders.remove(trade._sl_order)
-            if trade._tp_order:
-                self.orders.remove(trade._tp_order)
-            self.closed_trades.append(trade._replace(exit_price=price, exit_bar=time_index))
-            self._cash += trade.pl
-        except Exception as e:
-            print(e)
+
+        if trade._sl_order and trade._sl_order in self.orders:
+            self.orders.remove(trade._sl_order)
+        if trade._tp_order and trade._tp_order in self.orders:
+            self.orders.remove(trade._tp_order)
+        print(len(self.trades))
+        self.closed_trades.append(trade._replace(exit_price=price, exit_bar=time_index))
+        self._cash += trade.pl
+        
 
     def _open_trade(self, price: float, size: int,
                     sl: Optional[float], tp: Optional[float], time_index, tag, stock):
+        # print('open trade')
         trade = Trade(self, size, price, time_index, tag, stock)
         self.trades.append(trade)
+        # print(len(self.trades))
         # Create SL/TP (bracket) orders.
         # Make sure SL order is created first so it gets adversarially processed before TP order
         # in case of an ambiguous tie (both hit within a single bar).
@@ -1224,7 +1235,8 @@ class Backtest:
                  margin: float = 1.,
                  trade_on_close=False,
                  hedging=False,
-                 exclusive_orders=False
+                 exclusive_orders=False,
+                 stocks_len:int=1,
                  ):
         """
         Initialize a backtest. Requires data and a strategy to test.
@@ -1388,6 +1400,7 @@ class Backtest:
         unique_dates = unique_dates.sort_values()
         self._all_dates = unique_dates
         self._cash = cash
+        self._stocks_len = stocks_len
 
     
     def run(self, **kwargs) -> pd.Series:
@@ -1444,10 +1457,25 @@ class Backtest:
         strategy.init()
         data._update()  # Strategy.init might have changed/added to data.df
 
+        npartitions = int(self._stocks_len / 15)
+
         # Indicators used in Strategy.next()
         indicator_attrs = {attr: indicator
                            for attr, indicator in strategy.__dict__.items()
                            if isinstance(indicator, _Indicator)}.items()
+        
+        unique_stocks = self._data['stock'].unique().compute().tolist()
+
+        # 创建股票到组编号的映射
+        group_map = {stock: i // 10 for i, stock in enumerate(unique_stocks)}
+
+        
+
+        # 定义一个函数，用于为 DataFrame 的每行分配组编号
+        def assign_group(partition):
+            partition_copy = partition.copy()  # 创建副本以避免警告
+            partition_copy['group'] = partition_copy['stock'].map(group_map)
+            return partition_copy
 
         def process_batch(current_batch, historical_data=None):
             # 合并历史数据和当前批次的数据
@@ -1467,29 +1495,35 @@ class Backtest:
             current_data_up_to_date = combined_data[(combined_data['date'] > five_days_ago) & (combined_data['date'] <= current_date)]
             return  current_data_up_to_date  # 假设这里返回了处理后的数据和最新的五天数据
         
+        def process_partition(current_data):
+
+            orders_df = strategy.next(current_data)
+            return orders_df
+
+        
         # 初始化历史数据变量
         historical_data = None
-
-        progress_len = len(self._all_dates)
         
-            
         with np.errstate(invalid='ignore'):
             i = 0
             for current_date in self._all_dates:
-                # if ((i -1) / progress_len < 0.2) and (i / progress_len > 0.2):
-                #     print('progress is now 20 %')
-                # elif((i -1) / progress_len < 0.4) and (i / progress_len > 0.4):
-                #     print('progress is now 40 %')
-                # elif((i -1) / progress_len < 0.6) and (i / progress_len > 0.6):
-                #     print('progress is now 60 %')
-                # elif((i -1) / progress_len < 0.8) and (i / progress_len > 0.8):
-                #     print('progress is now 80 %')
-                # elif((i -1) / progress_len < 1) and (i / progress_len == 1):
-                #     print("progress is 100% complete")
-                # print(current_date)
-                # 选择当前批次的数据
-                # current_batch = self._data.loc[self._data['date'].between(start_date, end_date)]
+                print(current_date)
+
                 current_batch = self._data.loc[self._data['date']==current_date].compute()
+                current_date_ts = pd.Timestamp(current_date)
+            
+                # 计算5天前的日期
+                five_days_ago = current_date_ts - pd.Timedelta(days=5)
+                
+                # 筛选出当前日期之前5天内的所有数据
+                # 注意：这里包括了当前日期当天的数据，如果不需要当天的数据，可以将条件改为 < current_date
+                current_data_up_to_date = self._data[(self._data['date'] > five_days_ago) & (self._data['date'] <= current_date)]
+                # current_batch = self._data.loc[self._data['date']==current_date].repartition(npartitions=10)
+
+                meta = current_data_up_to_date._meta.copy()
+                meta['group'] = pd.Series(dtype='int')
+
+                data_with_group  = current_data_up_to_date.map_partitions(assign_group, meta=meta)
                 
                 # 处理当前批次
                 historical_data = process_batch(current_batch, historical_data)
@@ -1498,14 +1532,57 @@ class Backtest:
                 # 例如，计算当前批次中每条记录基于过去五天数据的某个指标
                 broker.update_current_date(current_date)
                 data.set_data(historical_data)
-
-                # 处理订单和经纪人事务
                 try:
                     broker.next()
-                    # 为了简化，我们假设 strategy.next 方法已经被修改为接受当前数据作为参数
-                    strategy.next(historical_data)
                 except _OutOfMoneyError:
                     pass
+
+                # 处理订单和经纪人事务
+                # print(type(current_data_up_to_date))
+                # results = [process_partition(part) for part in current_data_up_to_date.to_delayed()]
+
+                # dask.compute(*results)
+
+                meta = pd.DataFrame({
+                    'append_orders': pd.Series(dtype='object'),
+                    'insert_orders': pd.Series(dtype='object'),
+                    'cancel_orders': pd.Series(dtype='object'),
+                })
+
+                # processed_dfs = current_data_up_to_date.map_partitions(process_partition, meta=meta)
+                processed_dfs = data_with_group.groupby('group').apply(process_partition, meta=meta)
+
+                # 如果 process_partition 返回的 DataFrame 包含 'append_orders' 和 'insert_orders' 列
+                # 我们可以直接在合并后的 DataFrame 上操作
+
+                # 计算合并后的 DataFrame 来获取实际的数据
+                orders_df = processed_dfs.compute()
+
+                # 提取 'append_orders' 和 'insert_orders' 列表
+                append_orders_lists = orders_df['append_orders'].tolist()
+                insert_orders_lists = orders_df['insert_orders'].tolist()
+                cancel_orders_lists = orders_df['cancel_orders'].tolist()
+
+                # 合并列表
+                all_append_orders = [order for sublist in append_orders_lists for order in sublist]
+                all_insert_orders = [order for sublist in insert_orders_lists for order in sublist]
+                all_cancel_orders = [order for sublist in cancel_orders_lists for order in sublist]
+
+                # 首先处理插入的订单
+                
+                # 然后处理追加的订单
+                for order in all_cancel_orders:
+                    print('cancel')
+                    order.cancel()
+
+                for order in all_append_orders:
+                    broker.orders.append(order)
+                    broker.update_position(order.stock, order.size, broker.get_stock_price(order.stock))
+
+                for order in all_insert_orders:
+                    broker.orders.insert(0, order)
+                    broker.update_position(order.stock, order.size, broker.get_stock_price(order.stock))
+
 
                 data._set_length(i)
                 i += 1
