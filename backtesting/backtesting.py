@@ -18,6 +18,7 @@ from math import copysign
 from numbers import Number
 from typing import Callable, Dict, List, Optional, Sequence, Tuple, Type, Union
 import datetime
+import time
 
 import numpy as np
 import pandas as pd
@@ -25,7 +26,7 @@ from numpy.random import default_rng
 
 from dask import dataframe as dd
 from dask import delayed, compute
-import dask
+ 
 
 
 try:
@@ -1506,18 +1507,21 @@ class Backtest:
         
         with np.errstate(invalid='ignore'):
             i = 0
+            pre_date = self._all_dates[0]
             for current_date in self._all_dates:
                 print(current_date)
+                start_time = time.time()
 
                 current_batch = self._data.loc[self._data['date']==current_date].compute()
                 current_date_ts = pd.Timestamp(current_date)
             
                 # 计算5天前的日期
-                five_days_ago = current_date_ts - pd.Timedelta(days=5)
+                # five_days_ago = current_date_ts - pd.Timedelta(days=5)
                 
                 # 筛选出当前日期之前5天内的所有数据
                 # 注意：这里包括了当前日期当天的数据，如果不需要当天的数据，可以将条件改为 < current_date
-                current_data_up_to_date = self._data[(self._data['date'] > five_days_ago) & (self._data['date'] <= current_date)]
+                
+                current_data_up_to_date = self._data[(self._data['date'] >= pre_date) & (self._data['date'] <= current_date)]
                 # current_batch = self._data.loc[self._data['date']==current_date].repartition(npartitions=10)
 
                 meta = current_data_up_to_date._meta.copy()
@@ -1536,7 +1540,8 @@ class Backtest:
                     broker.next()
                 except _OutOfMoneyError:
                     pass
-
+                
+                mid_time = time.time()
                 # 处理订单和经纪人事务
                 # print(type(current_data_up_to_date))
                 # results = [process_partition(part) for part in current_data_up_to_date.to_delayed()]
@@ -1546,7 +1551,7 @@ class Backtest:
                 meta = pd.DataFrame({
                     'append_orders': pd.Series(dtype='object'),
                     'insert_orders': pd.Series(dtype='object'),
-                    'cancel_orders': pd.Series(dtype='object'),
+                    # 'cancel_orders': pd.Series(dtype='object'),
                 })
 
                 # processed_dfs = current_data_up_to_date.map_partitions(process_partition, meta=meta)
@@ -1561,19 +1566,19 @@ class Backtest:
                 # 提取 'append_orders' 和 'insert_orders' 列表
                 append_orders_lists = orders_df['append_orders'].tolist()
                 insert_orders_lists = orders_df['insert_orders'].tolist()
-                cancel_orders_lists = orders_df['cancel_orders'].tolist()
+                # cancel_orders_lists = orders_df['cancel_orders'].tolist()
 
                 # 合并列表
                 all_append_orders = [order for sublist in append_orders_lists for order in sublist]
                 all_insert_orders = [order for sublist in insert_orders_lists for order in sublist]
-                all_cancel_orders = [order for sublist in cancel_orders_lists for order in sublist]
+                # all_cancel_orders = [order for sublist in cancel_orders_lists for order in sublist]
 
                 # 首先处理插入的订单
                 
                 # 然后处理追加的订单
-                for order in all_cancel_orders:
-                    print('cancel')
-                    order.cancel()
+                # for order in all_cancel_orders:
+                #     print('cancel')
+                #     order.cancel()
 
                 for order in all_append_orders:
                     broker.orders.append(order)
@@ -1583,9 +1588,12 @@ class Backtest:
                     broker.orders.insert(0, order)
                     broker.update_position(order.stock, order.size, broker.get_stock_price(order.stock))
 
-
+                end_time = time.time()
+                print(f'broker.next spent time : {mid_time - start_time}')
+                print(f'strategy.next spent time : {end_time - mid_time}')
                 data._set_length(i)
                 i += 1
+                pre_date = current_date
   
             else:
                 # 关闭任何剩余的开放交易
