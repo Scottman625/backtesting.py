@@ -7,6 +7,9 @@ from itertools import cycle, combinations
 from functools import partial
 from typing import Callable, List, Union
 
+import decimal
+from collections.abc import Mapping, Iterable
+
 import numpy as np
 import pandas as pd
 
@@ -656,7 +659,7 @@ return this.labels[index] || "";
     kwargs = {}
     if plot_width is None:
         kwargs['sizing_mode'] = 'stretch_width'
-
+    
     fig = gridplot(
         plots,
         ncols=1,

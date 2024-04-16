@@ -19,6 +19,8 @@ from numbers import Number
 from typing import Callable, Dict, List, Optional, Sequence, Tuple, Type, Union
 import datetime
 import time
+from decimal import Decimal
+
 
 import numpy as np
 import pandas as pd
@@ -27,7 +29,7 @@ from numpy.random import default_rng
 from dask import dataframe as dd
 from dask import delayed, compute
  
-
+from collections.abc import Mapping, Iterable
 
 try:
     from tqdm.auto import tqdm as _tqdm
@@ -37,7 +39,7 @@ except ImportError:
         return seq
 
 from ._plotting import plot  # noqa: I001
-from ._stats import compute_stats
+from ._stats import compute_stats, compute_multiple_stats
 from ._util import _as_str, _Indicator, _Data, try_
 
 __pdoc__ = {
@@ -763,25 +765,28 @@ class _Broker:
         self._hedging = hedging
         self._exclusive_orders = exclusive_orders
 
-        unique_dates = self._data.__getdata__()['date'].compute().unique()
-        print(f'df_pandas: {unique_dates}')
+        # unique_dates = self._data.__getdata__()['date'].compute().unique()
+        # print(f'df_pandas: {unique_dates}')
 
         # 假设 self._data.df['date'] 是包含日期时间戳的列
         myData = self._data.__getdata__()
         if isinstance(myData, pd.DataFrame):
-            print("这是一个 Pandas DataFrame")
-            dateIndex = self._data.__getdata__()['date']
+            self._equity = np.tile(np.nan, len(index))
+
         elif isinstance(myData, dd.DataFrame):
             print("这是一个 Dask DataFrame")
-            dateIndex = self._data.__getdata__()['date'].compute()
+            dateIndex = myData['date'].compute()
+            index = pd.to_datetime(dateIndex)  # 转换为日期，并且标准化时间为00:00:00
+            # unique_dates = pd.Index(index.unique().date)  # 转换为日期对象，并去重
+            unique_dates = pd.Index(index.dt.date.unique())
+            # 使用去重后的日期作为索引创建Series
+            self._equity = pd.Series(index=unique_dates, dtype=float)
         else:
             print("未知的 DataFrame 类型")
-        index = pd.to_datetime(dateIndex)  # 转换为日期，并且标准化时间为00:00:00
-        # unique_dates = pd.Index(index.unique().date)  # 转换为日期对象，并去重
-        unique_dates = pd.Index(index.dt.date.unique())
 
-        # 使用去重后的日期作为索引创建Series
-        self._equity = pd.Series(index=unique_dates, dtype=float)
+        
+
+        
 
         self.orders: List[Order] = []
         self.trades: List[Trade] = []
@@ -916,17 +921,39 @@ class _Broker:
     
     def last_price(self,stock) -> float:
         """ Price at the last (current) close. """
-        try:
-            return self._data.filtered_data[self._data.filtered_data['stock']==stock].Close.iloc[-1]
-        except:
-            print(self._data.filtered_data[self._data.filtered_data['stock']==stock].Close)
+        data = self._data.__getdata__()
 
-    def _adjusted_price(self,stock, size=None, price=None) -> float:
+        if isinstance(data, pd.DataFrame):
+            return self._data.Close[-1]
+        elif isinstance(data, dd.DataFrame):
+            try:
+                return self._data.filtered_data[self._data.filtered_data['stock']==stock].Close.iloc[-1]
+            except:
+                print(self._data.filtered_data[self._data.filtered_data['stock']==stock].Close)
+
+    def _adjusted_price(self, stock, size=None, price=None) -> float:
         """
-        Long/short `price`, adjusted for commisions.
+        Long/short `price`, adjusted for commissions.
         In long positions, the adjusted price is a fraction higher, and vice versa.
+        This function returns a Decimal for high precision.
         """
-        return (price or self.last_price(stock)) * (1 + copysign(self._commission, size))
+        data = self._data.__getdata__()
+        
+        # Ensure all inputs are Decimal
+        price_decimal = Decimal(price) if price is not None else Decimal(self.last_price(stock))
+        commission_decimal = Decimal(self._commission)
+
+        # Convert copysign result to Decimal before the multiplication
+        sign_adjustment = Decimal(copysign(1, size))  # This ensures the sign adjustment is also a Decimal
+
+        # Adjust the price
+        if isinstance(data, pd.DataFrame) or isinstance(data, dd.DataFrame):
+            # Calculate the adjustment factor using Decimal arithmetic
+            adjustment_factor = Decimal(1) + (sign_adjustment * commission_decimal)
+            adjusted_price = price_decimal * adjustment_factor
+            return float(adjusted_price)
+        else:
+            raise ValueError("Data type is not supported for price adjustment")
 
     @property
     def equity(self) -> float:
@@ -942,24 +969,43 @@ class _Broker:
         # 假设 current_date 已经是一个 pd.Timestamp 或能够被转换为 Timestamp 的对象
         
         # 更新总资产并获取当前的总资产值
+        data = self._data.__getdata__()
 
-        # i = self._i = len(self._data.filtered_data) - 1
-        i = self._i = self._data._get_length()
-        self._process_orders()
-        self._process_trades()
-        equity = self.update_equity(self._current_date)
-        # self._equity[i] = equity
+        if isinstance(data, pd.DataFrame):
+
+            i = self._i = len(self._data) - 1
+            self._process_orders()
+
+            # Log account equity for the equity curve
+            equity = self.equity
+            self._equity[i] = equity
+
+            # If equity is negative, set all to 0 and stop the simulation
+            if equity <= 0:
+                assert self.margin_available <= 0
+                for trade in self.trades:
+                    self._close_trade(trade, self._data.Close[-1], i)
+                self._cash = 0
+                self._equity[i:] = 0
+                raise _OutOfMoneyError
         
-        # If equity is negative, set all to 0 and stop the simulation
-        if equity <= 0:
-            assert self.margin_available <= 0
-            for trade in self.trades:
-                price = self._data.filtered_data[self._data.filtered_data['stock']==trade.stock].Close.iloc[-1]
-                self._close_trade(trade, price, i)
-                print('test')
-            self._cash = 0
-            self._equity[i:] = 0
-            raise _OutOfMoneyError
+        elif isinstance(data, dd.DataFrame):
+            i = self._i = self._data._get_length()
+            self._process_orders()
+            self._process_trades()
+            equity = self.update_equity(self._current_date)
+            # self._equity[i] = equity
+            
+            # If equity is negative, set all to 0 and stop the simulation
+            if equity <= 0:
+                assert self.margin_available <= 0
+                for trade in self.trades:
+                    price = self._data.filtered_data[self._data.filtered_data['stock']==trade.stock].Close.iloc[-1]
+                    self._close_trade(trade, price, i)
+                    print('test')
+                self._cash = 0
+                self._equity[i:] = 0
+                raise _OutOfMoneyError
 
 
         # 如果总资产净值为负，终止模拟
@@ -1228,7 +1274,7 @@ class Backtest:
     optimize it.
     """
     def __init__(self,
-                 data: dd,
+                 data,
                  strategy: Type[Strategy],
                  *,
                  cash: float = 10_000,
@@ -1295,115 +1341,108 @@ class Backtest:
                             'entry order price')
 
 
-        # 异步计算以确定索引类型
-        index_type = data.index.compute()
+        if isinstance(data,pd.DataFrame):
+             # Convert index to datetime index
+            if (not isinstance(data.index, pd.DatetimeIndex) and
+                not isinstance(data.index, pd.RangeIndex) and
+                # Numeric index with most large numbers
+                (data.index.is_numeric() and
+                (data.index > pd.Timestamp('1975').timestamp()).mean() > .8)):
+                try:
+                    data.index = pd.to_datetime(data.index, infer_datetime_format=True)
+                except ValueError:
+                    pass
+            if 'Volume' not in data:
+                data['Volume'] = np.nan
 
-        # 将索引转换为 datetime index
-        if (not isinstance(index_type, pd.DatetimeIndex) and
-                not isinstance(index_type, pd.RangeIndex) and
-                # 异步计算以检查索引是否为数字，并且大多数值大于1975年的时间戳
-                (data.index.map_partitions(lambda x: pd.to_numeric(x, errors='coerce').notnull()).mean().compute() > .8) and
-                (data.index.map_partitions(lambda x: (x > pd.Timestamp('1975').timestamp())).mean().compute() > .8)):
-            try:
-                # 注意：这会将整个索引加载到内存中进行转换，可能会导致性能问题
-                data['index_as_datetime'] = data.map_partitions(lambda df: pd.to_datetime(df.index, infer_datetime_format=True))
-                data = data.set_index('index_as_datetime', sorted=True)
-            except ValueError:
-                pass
+            if len(data) == 0:
+                raise ValueError('OHLC `data` is empty')
+            if len(data.columns.intersection({'Open', 'High', 'Low', 'Close', 'Volume'})) != 5:
+                raise ValueError("`data` must be a pandas.DataFrame with columns "
+                                "'Open', 'High', 'Low', 'Close', and (optionally) 'Volume'")
+            if data[['Open', 'High', 'Low', 'Close']].isnull().values.any():
+                raise ValueError('Some OHLC values are missing (NaN). '
+                                'Please strip those lines with `df.dropna()` or '
+                                'fill them in with `df.interpolate()` or whatever.')
+            if np.any(data['Close'] > cash):
+                warnings.warn('Some prices are larger than initial cash value. Note that fractional '
+                            'trading is not supported. If you want to trade Bitcoin, '
+                            'increase initial cash, or trade μBTC or satoshis instead (GH-134).',
+                            stacklevel=2)
+            if not data.index.is_monotonic_increasing:
+                warnings.warn('Data index is not sorted in ascending order. Sorting.',
+                            stacklevel=2)
+                data = data.sort_index()
+            if not isinstance(data.index, pd.DatetimeIndex):
+                warnings.warn('Data index is not datetime. Assuming simple periods, '
+                            'but `pd.DateTimeIndex` is advised.',
+                            stacklevel=2)
 
-        # # 检查Volume列是否存在，如果不存在则添加
-        # if 'Volume' not in data.columns:
-        #     data['Volume'] = np.nan
+            self._data: pd.DataFrame = data
+            self._broker = partial(
+                _Broker, cash=cash, commission=commission, margin=margin,
+                trade_on_close=trade_on_close, hedging=hedging,
+                exclusive_orders=exclusive_orders, index=data.index,
+            )
+            self._strategy = strategy
+            self._results: Optional[pd.Series] = None
+        elif isinstance(data, dd.DataFrame):
+             # 异步计算以确定索引类型
+            index_type = data.index.compute()
 
-        # # 异步计算以检查数据长度
-        # if len(data) == 0:
-        #     raise ValueError('OHLC `data` is empty')
-
-        # # 异步计算以检查必要的列是否存在
-        # required_columns = {'Open', 'High', 'Low', 'Close', 'Volume'}
-        # columns_exist = data.columns.intersection(required_columns)
-        # if len(columns_exist.compute()) != len(required_columns):
-        #     raise ValueError("`data` must be a dask.DataFrame with columns 'Open', 'High', 'Low', 'Close', and (optionally) 'Volume'")
-        
-        # 检查OHLC列是否有任何NaN值
-        if data[['Open', 'High', 'Low', 'Close']].map_partitions(lambda df: df.isnull().values.any()).compute().any():
-            raise ValueError('Some OHLC values are missing (NaN). Please strip those lines with `df.dropna()` or fill them in with `df.interpolate()` or whatever.')
-
-
-        # 这里假设`cash`是一个已经定义的变量
-        # 异步计算以检查Close价格是否大于初始现金值
-        if data['Close'].map_partitions(lambda df: df.isnull().values.any()).compute().any():
-            warnings.warn('Some prices are larger than initial cash value. Note that fractional trading is not supported. If you want to trade Bitcoin, increase initial cash, or trade μBTC or satoshis instead (GH-134).', stacklevel=2)
-
-
-        # # 检查所有分区的索引是否都是单调递增的
-        # if not data.map_partitions(lambda x: x.index.is_monotonic_increasing).all().compute():
-        #     warnings.warn('Data index is not sorted in ascending order. Sorting.', stacklevel=2)
-        #     data = data.map_partitions(lambda df: df.sort_index())
+            # 将索引转换为 datetime index
+            if (not isinstance(index_type, pd.DatetimeIndex) and
+                    not isinstance(index_type, pd.RangeIndex) and
+                    # 异步计算以检查索引是否为数字，并且大多数值大于1975年的时间戳
+                    (data.index.map_partitions(lambda x: pd.to_numeric(x, errors='coerce').notnull()).mean().compute() > .8) and
+                    (data.index.map_partitions(lambda x: (x > pd.Timestamp('1975').timestamp())).mean().compute() > .8)):
+                try:
+                    # 注意：这会将整个索引加载到内存中进行转换，可能会导致性能问题
+                    data['index_as_datetime'] = data.map_partitions(lambda df: pd.to_datetime(df.index, infer_datetime_format=True))
+                    data = data.set_index('index_as_datetime', sorted=True)
+                except ValueError:
+                    pass
+            # 检查OHLC列是否有任何NaN值
+            if data[['Open', 'High', 'Low', 'Close']].map_partitions(lambda df: df.isnull().values.any()).compute().any():
+                raise ValueError('Some OHLC values are missing (NaN). Please strip those lines with `df.dropna()` or fill them in with `df.interpolate()` or whatever.')
 
 
-        # 再次检查索引是否为DatetimeIndex，这可能需要显式地将索引转换为DatetimeIndex
-        # 由于Dask的惰性计算特性，这里我们不再进行检查，而是提出警告建议
-        warnings.warn('Ensure data index is datetime. Assuming simple periods, but `pd.DateTimeIndex` is advised.', stacklevel=2)
+            # 这里假设`cash`是一个已经定义的变量
+            # 异步计算以检查Close价格是否大于初始现金值
+            if data['Close'].map_partitions(lambda df: df.isnull().values.any()).compute().any():
+                warnings.warn('Some prices are larger than initial cash value. Note that fractional trading is not supported. If you want to trade Bitcoin, increase initial cash, or trade μBTC or satoshis instead (GH-134).', stacklevel=2)
 
-        # # Convert index to datetime index
-        # if (not isinstance(data.index, pd.DatetimeIndex) and
-        #     not isinstance(data.index, pd.RangeIndex) and
-        #     # Numeric index with most large numbers
-        #     (data.index.is_numeric() and
-        #      (data.index > pd.Timestamp('1975').timestamp()).mean() > .8)):
-        #     try:
-        #         data.index = pd.to_datetime(data.index, infer_datetime_format=True)
-        #     except ValueError:
-        #         pass
 
-        # if 'Volume' not in data:
-        #     data['Volume'] = np.nan
+            # # 检查所有分区的索引是否都是单调递增的
+            # if not data.map_partitions(lambda x: x.index.is_monotonic_increasing).all().compute():
+            #     warnings.warn('Data index is not sorted in ascending order. Sorting.', stacklevel=2)
+            #     data = data.map_partitions(lambda df: df.sort_index())
 
-        # if len(data) == 0:
-        #     raise ValueError('OHLC `data` is empty')
-        # if len(data.columns.intersection({'Open', 'High', 'Low', 'Close', 'Volume'})) != 5:
-        #     raise ValueError("`data` must be a pandas.DataFrame with columns "
-        #                      "'Open', 'High', 'Low', 'Close', and (optionally) 'Volume'")
-        # if data[['Open', 'High', 'Low', 'Close']].isnull().values.any():
-        #     raise ValueError('Some OHLC values are missing (NaN). '
-        #                      'Please strip those lines with `df.dropna()` or '
-        #                      'fill them in with `df.interpolate()` or whatever.')
-        # if np.any(data['Close'] > cash):
-        #     warnings.warn('Some prices are larger than initial cash value. Note that fractional '
-        #                   'trading is not supported. If you want to trade Bitcoin, '
-        #                   'increase initial cash, or trade μBTC or satoshis instead (GH-134).',
-        #                   stacklevel=2)
-        # if not data.index.is_monotonic_increasing:
-        #     warnings.warn('Data index is not sorted in ascending order. Sorting.',
-        #                   stacklevel=2)
-        #     data = data.sort_index()
-        # if not isinstance(data.index, pd.DatetimeIndex):
-        #     warnings.warn('Data index is not datetime. Assuming simple periods, '
-        #                   'but `pd.DateTimeIndex` is advised.',
-        #                   stacklevel=2)
 
-        self._data: dd = data
-        self._broker = partial(
-            _Broker, cash=cash, commission=commission, margin=margin,
-            trade_on_close=trade_on_close, hedging=hedging,
-            exclusive_orders=exclusive_orders, index=data.index,
-        )
-        # print('data index is :' + str(data.index))
-        self._strategy = strategy
-        self._results: Optional[pd.Series] = None
+            # 再次检查索引是否为DatetimeIndex，这可能需要显式地将索引转换为DatetimeIndex
+            # 由于Dask的惰性计算特性，这里我们不再进行检查，而是提出警告建议
+            warnings.warn('Ensure data index is datetime. Assuming simple periods, but `pd.DateTimeIndex` is advised.', stacklevel=2)
 
-        # all_dates = pd.to_datetime(self._data['date']).unique().normalize()
-        # all_dates = pd.Series(all_dates).sort_values().values  # 转换为 Series，使用 sort_values，然后取 values
+            self._data: dd = data
+            self._broker = partial(
+                _Broker, cash=cash, commission=commission, margin=margin,
+                trade_on_close=trade_on_close, hedging=hedging,
+                exclusive_orders=exclusive_orders, index=data.index,
+            )
+            # print('data index is :' + str(data.index))
+            self._strategy = strategy
+            self._results: Optional[pd.Series] = None
 
-        # 获取唯一的日期并排序
-        unique_dates = self._data['date'].drop_duplicates().compute()
-        unique_dates = unique_dates.sort_values()
-        self._all_dates = unique_dates
-        self._cash = cash
-        self._stocks_len = stocks_len
+            # all_dates = pd.to_datetime(self._data['date']).unique().normalize()
+            # all_dates = pd.Series(all_dates).sort_values().values  # 转换为 Series，使用 sort_values，然后取 values
 
-    
+            # 获取唯一的日期并排序
+            unique_dates = self._data['date'].drop_duplicates().compute()
+            unique_dates = unique_dates.sort_values()
+            self._all_dates = unique_dates
+            self._cash = cash
+            self._stocks_len = stocks_len
+
     def run(self, **kwargs) -> pd.Series:
         """
         Run the backtest. Returns `pd.Series` with results and statistics.
@@ -1451,6 +1490,70 @@ class Backtest:
             period of the `Strategy.I` indicator which lags the most.
             Obviously, this can affect results.
         """
+        data = _Data(self._data.copy(deep=False))
+        broker: _Broker = self._broker(data=data)
+        strategy: Strategy = self._strategy(broker, data, kwargs)
+
+        strategy.init()
+        data._update()  # Strategy.init might have changed/added to data.df
+
+        # Indicators used in Strategy.next()
+        indicator_attrs = {attr: indicator
+                           for attr, indicator in strategy.__dict__.items()
+                           if isinstance(indicator, _Indicator)}.items()
+
+        # Skip first few candles where indicators are still "warming up"
+        # +1 to have at least two entries available
+        start = 1 + max((np.isnan(indicator.astype(float)).argmin(axis=-1).max()
+                         for _, indicator in indicator_attrs), default=0)
+
+        # Disable "invalid value encountered in ..." warnings. Comparison
+        # np.nan >= 3 is not invalid; it's False.
+        with np.errstate(invalid='ignore'):
+
+            for i in range(start, len(self._data)):
+                # Prepare data and indicators for `next` call
+                data._set_length(i + 1)
+                for attr, indicator in indicator_attrs:
+                    # Slice indicator on the last dimension (case of 2d indicator)
+                    setattr(strategy, attr, indicator[..., :i + 1])
+
+                # Handle orders processing and broker stuff
+                try:
+                    broker.next()
+                except _OutOfMoneyError:
+                    break
+
+                # Next tick, a moment before bar close
+                strategy.next()
+            else:
+                # Close any remaining open trades so they produce some stats
+                for trade in broker.trades:
+                    trade.close()
+
+                # Re-run broker one last time to handle orders placed in the last strategy
+                # iteration. Use the same OHLC values as in the last broker iteration.
+                if start < len(self._data):
+                    try_(broker.next, exception=_OutOfMoneyError)
+
+            # Set data back to full length
+            # for future `indicator._opts['data'].index` calls to work
+            data._set_length(len(self._data))
+
+            equity = pd.Series(broker._equity).bfill().fillna(broker._cash).values
+            
+            self._results = compute_stats(
+                trades=broker.closed_trades,
+                equity=equity,
+                ohlc_data=self._data,
+                risk_free_rate=0.0,
+                strategy_instance=strategy,
+            )
+
+        return self._results
+    
+    def mul_run(self, **kwargs) -> pd.Series:
+        
         data = _Data(self._data.copy(deep=False))
         broker: _Broker = self._broker(data=data)
         strategy: Strategy = self._strategy(broker, data, kwargs)
@@ -1610,7 +1713,7 @@ class Backtest:
 
             print(len(equity))
 
-            self._results = compute_stats(
+            results = compute_multiple_stats(
                 trades=broker.closed_trades,
                 equity=equity,
                 ohlc_data=self._data,
@@ -1618,7 +1721,7 @@ class Backtest:
                 strategy_instance=strategy,
             )
 
-        return self._results
+        return results
 
     def optimize(self, *,
                  maximize: Union[str, Callable[[pd.Series], float]] = 'SQN',
@@ -2021,9 +2124,18 @@ class Backtest:
                 raise RuntimeError('First issue `backtest.run()` to obtain results.')
             results = self._results
 
+        def convert_decimal_to_float(df):
+            for column in df.columns:
+                if pd.api.types.is_object_dtype(df[column]):
+                    # Apply conversion where values are instances of decimal.Decimal
+                    df[column] = df[column].apply(lambda x: float(x) if isinstance(x, Decimal) else x)
+            return df
+        
+        data = convert_decimal_to_float(self._data)
+
         return plot(
             results=results,
-            df=self._data,
+            df=data,
             indicators=results._strategy._indicators,
             filename=filename,
             plot_width=plot_width,
