@@ -1173,7 +1173,7 @@ class _Broker:
 
             # Order processed
             except Exception as e:
-                print(f'error : {e}')
+                print(f'process orders error : {e}')
 
             self.orders.remove(order)
             
@@ -1207,7 +1207,7 @@ class _Broker:
                     # 同样，根据实际情况调整
                     self._close_trade(trade, trade.tp,time_index)
             except Exception as e:
-                print(f'error : {e}')
+                print(f'process trades error : {e}')
 
     def _reduce_trade(self, trade: Trade, price: float, size: float, time_index):
         assert trade.size * size < 0
