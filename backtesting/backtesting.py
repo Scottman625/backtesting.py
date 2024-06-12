@@ -1103,7 +1103,7 @@ class _Broker:
         i = self._i = len(self._data.filtered_data) - 1
         self._process_orders()
         equity = self.update_equity(self._current_date)
-        # self._equity[i] = equity
+        self._equity[i] = equity
         
         # If equity is negative, set all to 0 and stop the simulation
         if equity <= 0:
@@ -1304,7 +1304,6 @@ class _Broker:
         self._close_trade(close_trade, price, time_index)
 
     def _close_trade(self, trade: Trade, price: float, time_index):
-        print("測試")
         self.trades.remove(trade)
         if trade._sl_order:
             self.orders.remove(trade._sl_order)
@@ -1531,7 +1530,7 @@ class Backtest:
             for current_date in self._all_dates:
                 
                  # 将当前日期转换为 Pandas Timestamp
-                # print(current_date)
+                print(current_date)
                 # current_last_day = current_date
                 broker.update_current_date(current_date)
 
