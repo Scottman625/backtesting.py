@@ -1104,6 +1104,8 @@ class _Broker:
         self._process_orders()
         equity = self.update_equity(self._current_date)
         self._equity[i] = equity
+
+        print(equity)
         
         # If equity is negative, set all to 0 and stop the simulation
         if equity <= 0:
