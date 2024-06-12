@@ -1050,7 +1050,7 @@ class _Broker:
         return total_equity
 
     def get_stock_price(self, stock):
-        stock_data = self._data.filtered_data[self._data.filtered_data['stock'] == stock].copy()
+        stock_data = self._data.filtered_data[self._data.filtered_data['stock_code'] == stock].copy()
         stock_data['date'] = pd.to_datetime(stock_data['date']).dt.date
         current_date = pd.Timestamp(self._current_date).date()
         current_date_str = current_date.strftime("%Y-%m-%d")
