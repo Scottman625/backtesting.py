@@ -1,5 +1,5 @@
-exclude MANIFEST.in
-exclude .*
+include README.md
+include multibacktesting/*.py
+include multibacktesting/*.js
+recursive-include multibacktesting *
 
-recursive-exclude .* *
-recursive-exclude doc *
