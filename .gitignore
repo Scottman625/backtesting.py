@@ -23,5 +23,5 @@ doc/build/*
 *~*
 
 .venv/
-
+build/*
 .pypirc
