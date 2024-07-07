@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
 
 def compute_drawdown_duration_peaks(dd: pd.Series):
-    dd = dd[~dd.index.duplicated(keep='first')]  # 删除重复索引，保留第一个出现的
+    dd = dd[~dd.index.duplicated(keep='first')]  # 刪除重複索引，保留第一個出现的
     iloc = np.unique(np.r_[(dd == 0).values.nonzero()[0], len(dd) - 1])
     iloc = pd.Series(iloc, index=dd.index[iloc])
     df = iloc.to_frame('iloc').assign(prev=iloc.shift())
@@ -50,11 +50,11 @@ def compute_stats(
 
     ohlc_data_unique = ohlc_data.map_partitions(remove_duplicates)
 
-    # 计算并获取去重后的结果
-    # 注意：直接计算整个 DataFrame 而不仅是索引
+    # 計算並獲取去重后的结果
+    # 注意：直接計算整个 DataFrame 而不僅是索引
     ohlc_data_unique_computed = ohlc_data_unique.compute()
 
-    # 获取去重后的索引
+    # 獲取去重后的索引
     index = ohlc_data_unique_computed.index
     print(index)
 
