@@ -694,9 +694,9 @@ class Trade:
         return copysign(1, self.__size) * (price / self.__entry_price - 1)
 
     
-    def value(self, stock):
+    def value(self):
         """Trade total value in cash (volume × price)."""
-        price = self.__exit_price or self.__broker.last_price(stock)
+        price = self.__exit_price or self.__broker.last_price(self.stock)
         return abs(self.__size) * price
 
     # SL/TP management API
@@ -769,7 +769,7 @@ class _Broker:
             print("这是一个 Pandas DataFrame")
             dateIndex = self._data.__getdata__()['date']
         elif isinstance(myData, dd.DataFrame):
-            print("这是一个 Dask DataFrame")
+            print("这是一个 Dask DataFrame!!!!")
             dateIndex = self._data.__getdata__()['date'].compute()
         else:
             print("未知的 DataFrame 类型")
@@ -890,7 +890,7 @@ class _Broker:
         return total_equity
 
     def get_stock_price(self, stock):
-        stock_data = self._data.filtered_data[self._data.filtered_data['stock'] == stock].copy()
+        stock_data = self._data.filtered_data[self._data.filtered_data['stock_id'] == stock].copy()
         stock_data['date'] = pd.to_datetime(stock_data['date']).dt.date
         current_date = pd.Timestamp(self._current_date).date()
         current_date_str = current_date.strftime("%Y-%m-%d")
@@ -914,9 +914,9 @@ class _Broker:
     def last_price(self,stock) -> float:
         """ Price at the last (current) close. """
         try:
-            return self._data.filtered_data[self._data.filtered_data['stock']==stock].Close.iloc[-1]
+            return self._data.filtered_data[self._data.filtered_data['stock_id']==stock].Close.iloc[-1]
         except:
-            print(self._data.filtered_data[self._data.filtered_data['stock']==stock].Close)
+            print(self._data.filtered_data[self._data.filtered_data['stock_id']==stock].Close)
 
     def _adjusted_price(self,stock, size=None, price=None) -> float:
         """
@@ -930,9 +930,9 @@ class _Broker:
         return self._cash + sum(trade.pl for trade in self.trades)
 
     
-    def margin_available(self, stock) -> float:
+    def margin_available(self) -> float:
         # From https://github.com/QuantConnect/Lean/pull/3768
-        margin_used = sum(trade.value(stock) / self._leverage for trade in self.trades)
+        margin_used = sum(trade.value() / self._leverage for trade in self.trades)
         return max(0, self.equity - margin_used)
 
     def next(self):
@@ -949,9 +949,10 @@ class _Broker:
         
         # If equity is negative, set all to 0 and stop the simulation
         if equity <= 0:
-            assert self.margin_available <= 0
+            print("stop")
+            assert self.margin_available() <= 0
             for trade in self.trades:
-                price = self._data.filtered_data[self._data.filtered_data['stock']==trade.stock].Close.iloc[-1]
+                price = self._data.filtered_data[self._data.filtered_data['stock_id']==trade.stock].Close.iloc[-1]
                 self._close_trade(trade, price, i)
                 print('test')
             self._cash = 0
@@ -974,7 +975,7 @@ class _Broker:
 
         # Process orders
         for order in list(self.orders): 
-            data = self._data.filtered_data[self._data.filtered_data['stock']==order.stock]
+            data = self._data.filtered_data[self._data.filtered_data['stock_id']==order.stock]
             open, high, low = data['Open'].iloc[-1], data['High'].iloc[-1], data['Low'].iloc[-1]
 
             if len(data) > 1:
@@ -1134,7 +1135,7 @@ class _Broker:
         # Process trades
         for trade in list(self.trades): 
             # print('entry_price: ',str(trade.entry_price))
-            data = self._data.filtered_data[self._data.filtered_data['stock']==trade.stock]
+            data = self._data.filtered_data[self._data.filtered_data['stock_id']==trade.stock]
             open, high, low = data['Open'].iloc[-1], data['High'].iloc[-1], data['Low'].iloc[-1]
 
             # Related SL/TP order was already removed
@@ -1371,11 +1372,13 @@ class Backtest:
         #                   stacklevel=2)
 
         self._data: dd = data
+        print("test hello world a")
         self._broker = partial(
             _Broker, cash=cash, commission=commission, margin=margin,
             trade_on_close=trade_on_close, hedging=hedging,
             exclusive_orders=exclusive_orders, index=data.index,
         )
+        print("test hello world b")
         # print('data index is :' + str(data.index))
         self._strategy = strategy
         self._results: Optional[pd.Series] = None
@@ -1384,10 +1387,13 @@ class Backtest:
         # all_dates = pd.Series(all_dates).sort_values().values  # 转换为 Series，使用 sort_values，然后取 values
 
         # 获取唯一的日期并排序
+        print("test hello world c")
         unique_dates = self._data['date'].drop_duplicates().compute()
         unique_dates = unique_dates.sort_values()
+        print("test hello world d")
         self._all_dates = unique_dates
         self._cash = cash
+        print("test hello world e")
 
     
     def run(self, **kwargs) -> pd.Series:
@@ -1440,42 +1446,48 @@ class Backtest:
         data = _Data(self._data.copy(deep=False))
         broker: _Broker = self._broker(data=data)
         strategy: Strategy = self._strategy(broker, data, kwargs)
-
+        print("test run method a")
         strategy.init()
         data._update()  # Strategy.init might have changed/added to data.df
-
+        print("test run method b")
         # Indicators used in Strategy.next()
-        indicator_attrs = {attr: indicator
-                           for attr, indicator in strategy.__dict__.items()
-                           if isinstance(indicator, _Indicator)}.items()
+        # indicator_attrs = {attr: indicator
+        #                    for attr, indicator in strategy.__dict__.items()
+        #                    if isinstance(indicator, _Indicator)}.items()
 
         def process_batch(current_batch, historical_data=None):
             # 合并历史数据和当前批次的数据
             if historical_data is not None:
+                print("test process_batch a")
                 combined_data = pd.concat([historical_data, current_batch])
             else:
+                print("test process_batch b")
                 combined_data = current_batch
-            
+            print("test process_batch c")
             # 返回处理后的数据和用于下一批次的历史数据
             current_date_ts = pd.Timestamp(current_date)
-            
+            print("test process_batch d")
             # 计算5天前的日期
             five_days_ago = current_date_ts - pd.Timedelta(days=5)
-            
+            print("test process_batch e")
             # 筛选出当前日期之前5天内的所有数据
             # 注意：这里包括了当前日期当天的数据，如果不需要当天的数据，可以将条件改为 < current_date
             current_data_up_to_date = combined_data[(combined_data['date'] > five_days_ago) & (combined_data['date'] <= current_date)]
+            print("test process_batch f")
             return  current_data_up_to_date  # 假设这里返回了处理后的数据和最新的五天数据
         
         # 初始化历史数据变量
         historical_data = None
 
-        progress_len = len(self._all_dates)
+        # progress_len = len(self._all_dates)
         
-            
+        print("test b-0")
         with np.errstate(invalid='ignore'):
             i = 0
+            print("test run method b-1")
+            print(f"len of all dates: {len(self._all_dates)}")
             for current_date in self._all_dates:
+                print(f"current_date: {current_date}")
                 # if ((i -1) / progress_len < 0.2) and (i / progress_len > 0.2):
                 #     print('progress is now 20 %')
                 # elif((i -1) / progress_len < 0.4) and (i / progress_len > 0.4):
@@ -1490,13 +1502,14 @@ class Backtest:
                 # 选择当前批次的数据
                 # current_batch = self._data.loc[self._data['date'].between(start_date, end_date)]
                 current_batch = self._data.loc[self._data['date']==current_date].compute()
-                
+                print("test run method c")
                 # 处理当前批次
                 historical_data = process_batch(current_batch, historical_data)
-                
+                print("test run method d")
                 # 在这里执行你的数据处理逻辑...
                 # 例如，计算当前批次中每条记录基于过去五天数据的某个指标
                 broker.update_current_date(current_date)
+                print("test run method e")
                 data.set_data(historical_data)
 
                 # 处理订单和经纪人事务
