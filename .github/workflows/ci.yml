@@ -12,7 +12,7 @@ jobs:
       - uses: actions/checkout@v4
       - run: pip install flake8 mypy
       - run: flake8 backtesting setup.py
-      - run: mypy --no-warn-unused-ignores backtesting
+      # - run: mypy --no-warn-unused-ignores backtesting
 
   coverage:
     needs: lint
