@@ -4,6 +4,7 @@ import os
 import sys
 import warnings
 from contextlib import contextmanager
+from functools import partial
 from itertools import chain
 from multiprocessing import resource_tracker as _mprt
 from multiprocessing import shared_memory as _mpshm
@@ -13,6 +14,13 @@ from typing import Dict, List, Optional, Sequence, Union, cast
 
 import numpy as np
 import pandas as pd
+
+try:
+    from tqdm.auto import tqdm as _tqdm
+    _tqdm = partial(_tqdm, leave=False)
+except ImportError:
+    def _tqdm(seq, **_):
+        return seq
 
 
 def try_(lazy_func, default=None, exception=Exception):
