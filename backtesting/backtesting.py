@@ -1271,14 +1271,15 @@ class _Broker:
                             or low <= (order.tp or -np.inf) <= high
                         ):
                             warnings.warn(
-                        f"({data.index[-1]}) A contingent SL/TP order would execute in the "
-                        "same bar its parent stop/limit order was turned into a trade. "
-                        "Since we can't assert the precise intra-candle "
-                        "price movement, the affected SL/TP order will instead be executed on "
-                        "the next (matching) price/bar, making the result (of this trade) "
-                        "somewhat dubious. "
-                        "See https://github.com/kernc/backtesting.py/issues/119",
-                        UserWarning,
+                                f"({data.index[-1]}) A contingent SL/TP order would execute "
+                                " in the same bar its parent stop/limit order  "
+                                "was turned into a trade. Since we can't assert "
+                                "the precise intra-candle price movement, "
+                                "the affected SL/TP order will instead be executed on "
+                                "the next (matching) price/bar, making the result (of this trade) "
+                                "somewhat dubious. "
+                                "See https://github.com/kernc/backtesting.py/issues/119",
+                                UserWarning,
                             )
 
                 # Order processed
@@ -1401,7 +1402,7 @@ class Backtest:
 
     def __init__(
         self,
-        data: dd,
+        data: pd.DataFrame,
         strategy: Type[Strategy],
         *,
         cash: float = 10_000,
@@ -1514,7 +1515,8 @@ class Backtest:
         # required_columns = {'Open', 'High', 'Low', 'Close', 'Volume'}
         # columns_exist = data.columns.intersection(required_columns)
         # if len(columns_exist.compute()) != len(required_columns):
-        #     raise ValueError("`data` must be a dask.DataFrame with columns 'Open', 'High', 'Low', 'Close', and (optionally) 'Volume'")
+        #     raise ValueError("`data` must be a dask.DataFrame with columns 
+        # 'Open', 'High', 'Low', 'Close', and (optionally) 'Volume'")
 
         # 检查OHLC列是否有任何NaN值
         if (
@@ -1524,7 +1526,8 @@ class Backtest:
             .any()
         ):
             raise ValueError(
-                "Some OHLC values are missing (NaN). Please strip those lines with `df.dropna()` or fill them in with `df.interpolate()` or whatever."
+                "Some OHLC values are missing (NaN). Please strip those lines with `df.dropna()` "
+                "or fill them in with `df.interpolate()` or whatever."
             )
 
         # 这里假设`cash`是一个已经定义的变量
@@ -1536,7 +1539,10 @@ class Backtest:
             .any()
         ):
             warnings.warn(
-                "Some prices are larger than initial cash value. Note that fractional trading is not supported. If you want to trade Bitcoin, increase initial cash, or trade μBTC or satoshis instead (GH-134).",
+                "Some prices are larger than initial cash value."
+                 " Note that fractional trading is not supported. "
+                "If you want to trade Bitcoin, increase initial cash, "
+                "or trade μBTC or satoshis instead (GH-134).",
                 stacklevel=2,
             )
 
@@ -1548,7 +1554,8 @@ class Backtest:
         # 再次检查索引是否为DatetimeIndex，这可能需要显式地将索引转换为DatetimeIndex
         # 由于Dask的惰性计算特性，这里我们不再进行检查，而是提出警告建议
         warnings.warn(
-            "Ensure data index is datetime. Assuming simple periods, but `pd.DateTimeIndex` is advised.",
+            "Ensure data index is datetime. Assuming simple periods, "
+            "but `pd.DateTimeIndex` is advised.",
             stacklevel=2,
         )
 
@@ -1666,8 +1673,6 @@ class Backtest:
         # indicator_attrs = {attr: indicator
         #                    for attr, indicator in strategy.__dict__.items()
         #                    if isinstance(indicator, _Indicator)}.items()
-
-  
 
         with np.errstate(invalid="ignore"):
             i = 0
