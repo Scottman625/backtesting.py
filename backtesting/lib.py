@@ -18,7 +18,7 @@ from collections import OrderedDict
 from inspect import currentframe
 from itertools import chain, compress, count
 from numbers import Number
-from typing import Callable, Generator, Optional, Sequence, Union
+from typing import Callable, Optional, Sequence, Union
 
 import numpy as np
 import pandas as pd
@@ -548,7 +548,8 @@ class FractionalBacktest(Backtest):
 
         df = (df / satoshi).assign(Volume=df.Volume * satoshi)
 
-    as unchallenged in [this FAQ entry on GitHub](https://github.com/kernc/backtesting.py/issues/134),
+    as unchallenged in [this FAQ entry on GitHub]
+    (https://github.com/kernc/backtesting.py/issues/134),
     then passes `data`, `args*`, and `**kwargs` to its super.
 
     Parameter `satoshi` tells the amount of scaling to do. E.g. for

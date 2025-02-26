@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import os
 import sys
 import warnings
 from contextlib import contextmanager
-from functools import partial
 from itertools import chain
 from multiprocessing import resource_tracker as _mprt
 from multiprocessing import shared_memory as _mpshm
@@ -22,6 +20,7 @@ def try_(lazy_func, default=None, exception=Exception):
     except exception:
         return default
 
+
 @contextmanager
 def patch(obj, attr, newvalue):
     had_attr = hasattr(obj, attr)
@@ -34,6 +33,7 @@ def patch(obj, attr, newvalue):
             setattr(obj, attr, orig_value)
         else:
             delattr(obj, attr)
+
 
 def _as_str(value) -> str:
     if isinstance(value, (Number, str)):
@@ -237,6 +237,7 @@ class _Data:
     def __setstate__(self, state):
         self.__dict__ = state
 
+
 if sys.version_info >= (3, 13):
     SharedMemory = _mpshm.SharedMemory
 else:
@@ -257,6 +258,7 @@ else:
                 _mpshm._posixshmem.shm_unlink(self._name)
                 if self._track:
                     _mprt.unregister(self._name, "shared_memory")
+
 
 class SharedMemoryManager:
     """
@@ -320,3 +322,4 @@ class SharedMemoryManager:
         df.set_index(SharedMemoryManager._DF_INDEX_COL, drop=True, inplace=True)
         df.index.name = None
         return df, shm
+    
