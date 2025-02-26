@@ -9,11 +9,8 @@ if __name__ == '__main__':
     from setuptools import setup, find_packages
 
     setup(
-        name='multibacktesting',
-        version='0.0.7',
-        name='MultiBacktesting',
+        name='backtesting',
         description="Backtest trading strategies in Python",
-        version='0.1.0',
         license='AGPL-3.0',
         url='https://kernc.github.io/backtesting.py/',
         project_urls={
