@@ -322,4 +322,3 @@ class SharedMemoryManager:
         df.set_index(SharedMemoryManager._DF_INDEX_COL, drop=True, inplace=True)
         df.index.name = None
         return df, shm
-    
