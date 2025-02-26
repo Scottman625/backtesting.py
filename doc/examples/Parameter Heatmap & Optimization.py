@@ -44,43 +44,44 @@ class Sma4Cross(Strategy):
     n2 = 100
     n_enter = 20
     n_exit = 10
-    
+
     def init(self):
         self.sma1 = self.I(SMA, self.data.Close, self.n1)
         self.sma2 = self.I(SMA, self.data.Close, self.n2)
         self.sma_enter = self.I(SMA, self.data.Close, self.n_enter)
         self.sma_exit = self.I(SMA, self.data.Close, self.n_exit)
-        
+
     def next(self):
-        
+
         if not self.position:
-            
+
             # On upwards trend, if price closes above
             # "entry" MA, go long
-            
+
             # Here, even though the operands are arrays, this
             # works by implicitly comparing the two last values
             if self.sma1 > self.sma2:
                 if crossover(self.data.Close, self.sma_enter):
                     self.buy()
-                    
+
             # On downwards trend, if price closes below
             # "entry" MA, go short
-            
+
             else:
                 if crossover(self.sma_enter, self.data.Close):
                     self.sell()
-        
+
         # But if we already hold a position and the price
         # closes back below (above) "exit" MA, close the position
-        
+
         else:
-            if (self.position.is_long and
-                crossover(self.sma_exit, self.data.Close)
-                or
-                self.position.is_short and
-                crossover(self.data.Close, self.sma_exit)):
-                
+            if (
+                self.position.is_long
+                and crossover(self.sma_exit, self.data.Close)
+                or self.position.is_short
+                and crossover(self.data.Close, self.sma_exit)
+            ):
+
                 self.position.close()
 
 
@@ -94,13 +95,13 @@ class Sma4Cross(Strategy):
 # Let's optimize our strategy on Google stock data using _randomized_ grid search over the parameter space, evaluating at most (approximately) 200 randomly chosen combinations:
 
 # +
-# %%time 
+# %%time
 
 from multibacktesting import Backtest
 from multibacktesting.test import GOOG
 
 
-backtest = Backtest(GOOG, Sma4Cross, commission=.002)
+backtest = Backtest(GOOG, Sma4Cross, commission=0.002)
 
 stats, heatmap = backtest.optimize(
     n1=range(10, 110, 10),
@@ -108,10 +109,11 @@ stats, heatmap = backtest.optimize(
     n_enter=range(15, 35, 5),
     n_exit=range(10, 25, 5),
     constraint=lambda p: p.n_exit < p.n_enter < p.n1 < p.n2,
-    maximize='Equity Final [$]',
+    maximize="Equity Final [$]",
     max_tries=200,
     random_state=0,
-    return_heatmap=True)
+    return_heatmap=True,
+)
 # -
 
 # Notice `return_heatmap=True` parameter passed to
@@ -131,7 +133,7 @@ heatmap.sort_values().iloc[-3:]
 # Let's plot the whole heatmap by projecting it on two chosen dimensions.
 # Say we're mostly interested in how parameters `n1` and `n2`, on average, affect the outcome.
 
-hm = heatmap.groupby(['n1', 'n2']).mean().unstack()
+hm = heatmap.groupby(["n1", "n2"]).mean().unstack()
 hm
 
 # Let's plot this table using the excellent [_Seaborn_](https://seaborn.pydata.org) package:
@@ -142,7 +144,7 @@ hm
 import seaborn as sns
 
 
-sns.heatmap(hm[::-1], cmap='viridis')
+sns.heatmap(hm[::-1], cmap="viridis")
 # -
 
 # We see that, on average, we obtain the highest result using trend-determining parameters `n1=40` and `n2=60`,
@@ -157,7 +159,7 @@ sns.heatmap(hm[::-1], cmap='viridis')
 from multibacktesting.lib import plot_heatmaps
 
 
-plot_heatmaps(heatmap, agg='mean')
+plot_heatmaps(heatmap, agg="mean")
 # -
 
 # ## Model-based optimization
@@ -178,17 +180,18 @@ plot_heatmaps(heatmap, agg='mean')
 # %%time
 
 stats_skopt, heatmap, optimize_result = backtest.optimize(
-    n1=[10, 100],      # Note: For method="skopt", we
-    n2=[20, 200],      # only need interval end-points
+    n1=[10, 100],  # Note: For method="skopt", we
+    n2=[20, 200],  # only need interval end-points
     n_enter=[10, 40],
     n_exit=[10, 30],
     constraint=lambda p: p.n_exit < p.n_enter < p.n1 < p.n2,
-    maximize='Equity Final [$]',
-    method='skopt',
+    maximize="Equity Final [$]",
+    method="skopt",
     max_tries=200,
     random_state=0,
     return_heatmap=True,
-    return_optimization=True)
+    return_optimization=True,
+)
 # -
 
 heatmap.sort_values().iloc[-3:]
