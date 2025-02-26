@@ -1,8 +1,6 @@
 import warnings
 from numbers import Number
 from typing import Dict, List, Optional, Sequence, Union, cast
-import dask.dataframe as dd
-import dask.array as da
 
 import numpy as np
 import pandas as pd
