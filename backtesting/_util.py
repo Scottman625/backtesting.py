@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 import warnings
 from contextlib import contextmanager
@@ -56,6 +57,12 @@ def _as_list(value) -> List:
     if isinstance(value, Sequence) and not isinstance(value, str):
         return list(value)
     return [value]
+
+def _batch(seq):
+    # XXX: Replace with itertools.batched
+    n = np.clip(int(len(seq) // (os.cpu_count() or 1)), 1, 300)
+    for i in range(0, len(seq), n):
+        yield seq[i:i + n]
 
 
 def _data_period(index) -> Union[pd.Timedelta, Number]:
