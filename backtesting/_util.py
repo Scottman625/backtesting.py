@@ -1,5 +1,15 @@
+from __future__ import annotations
+
+import os
+import sys
 import warnings
+from contextlib import contextmanager
+from functools import partial
+from itertools import chain
+from multiprocessing import resource_tracker as _mprt
+from multiprocessing import shared_memory as _mpshm
 from numbers import Number
+from threading import Lock
 from typing import Dict, List, Optional, Sequence, Union, cast
 
 import numpy as np
@@ -12,6 +22,18 @@ def try_(lazy_func, default=None, exception=Exception):
     except exception:
         return default
 
+@contextmanager
+def patch(obj, attr, newvalue):
+    had_attr = hasattr(obj, attr)
+    orig_value = getattr(obj, attr, None)
+    setattr(obj, attr, newvalue)
+    try:
+        yield
+    finally:
+        if had_attr:
+            setattr(obj, attr, orig_value)
+        else:
+            delattr(obj, attr)
 
 def _as_str(value) -> str:
     if isinstance(value, (Number, str)):
@@ -214,3 +236,87 @@ class _Data:
 
     def __setstate__(self, state):
         self.__dict__ = state
+
+if sys.version_info >= (3, 13):
+    SharedMemory = _mpshm.SharedMemory
+else:
+    class SharedMemory(_mpshm.SharedMemory):
+        # From https://github.com/python/cpython/issues/82300#issuecomment-2169035092
+        __lock = Lock()
+
+        def __init__(self, *args, track: bool = True, **kwargs):
+            self._track = track
+            if track:
+                return super().__init__(*args, **kwargs)
+            with self.__lock:
+                with patch(_mprt, 'register', lambda *a, **kw: None):
+                    super().__init__(*args, **kwargs)
+
+        def unlink(self):
+            if _mpshm._USE_POSIX and self._name:
+                _mpshm._posixshmem.shm_unlink(self._name)
+                if self._track:
+                    _mprt.unregister(self._name, "shared_memory")
+
+class SharedMemoryManager:
+    """
+    A simple shared memory contextmanager based on
+    https://docs.python.org/3/library/multiprocessing.shared_memory.html#multiprocessing.shared_memory.SharedMemory
+    """
+    def __init__(self, create=False) -> None:
+        self._shms: list[SharedMemory] = []
+        self.__create = create
+
+    def SharedMemory(self, *, name=None, create=False, size=0, track=True):
+        shm = SharedMemory(name=name, create=create, size=size, track=track)
+        shm._create = create
+        # Essential to keep refs on Windows
+        # https://stackoverflow.com/questions/74193377/filenotfounderror-when-passing-a-shared-memory-to-a-new-process#comment130999060_74194875  # noqa: E501
+        self._shms.append(shm)
+        return shm
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args, **kwargs):
+        for shm in self._shms:
+            try:
+                shm.close()
+                if shm._create:
+                    shm.unlink()
+            except Exception:
+                warnings.warn(f'Failed to unlink shared memory {shm.name!r}',
+                              category=ResourceWarning, stacklevel=2)
+                raise
+
+    def arr2shm(self, vals):
+        """Array to shared memory. Returns (shm_name, shape, dtype) used for restore."""
+        assert vals.ndim == 1, (vals.ndim, vals.shape, vals)
+        shm = self.SharedMemory(size=vals.nbytes, create=True)
+        buf = np.ndarray(vals.shape, dtype=vals.dtype, buffer=shm.buf)
+        buf[:] = vals[:]  # Copy into shared memory
+        return shm.name, vals.shape, vals.dtype
+
+    def df2shm(self, df):
+        return tuple((
+            (column, *self.arr2shm(values))
+            for column, values in chain([(self._DF_INDEX_COL, df.index)], df.items())
+        ))
+
+    @staticmethod
+    def shm2arr(shm, shape, dtype):
+        arr = np.ndarray(shape, dtype=dtype, buffer=shm.buf)
+        arr.setflags(write=False)
+        return arr
+
+    _DF_INDEX_COL = '__bt_index'
+
+    @staticmethod
+    def shm2df(data_shm):
+        shm = [SharedMemory(name=name, create=False, track=False) for _, name, _, _ in data_shm]
+        df = pd.DataFrame({
+            col: SharedMemoryManager.shm2arr(shm, shape, dtype)
+            for shm, (col, _, shape, dtype) in zip(shm, data_shm)})
+        df.set_index(SharedMemoryManager._DF_INDEX_COL, drop=True, inplace=True)
+        df.index.name = None
+        return df, shm

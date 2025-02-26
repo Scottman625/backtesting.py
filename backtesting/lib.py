@@ -11,19 +11,22 @@ Please raise ideas for additions to this collection on the [issue tracker].
 [issue tracker]: https://github.com/kernc/backtesting.py
 """
 
+from __future__ import annotations
+
+import multiprocessing as mp
 from collections import OrderedDict
 from inspect import currentframe
-from itertools import compress
+from itertools import chain, compress, count
 from numbers import Number
-from typing import Callable, Optional, Sequence, Union
+from typing import Callable, Generator, Optional, Sequence, Union
 
 import numpy as np
 import pandas as pd
 
 from ._plotting import plot_heatmaps as _plot_heatmaps
 from ._stats import compute_stats as _compute_stats
-from ._util import _Array, _as_str
-from .backtesting import Strategy
+from ._util import SharedMemoryManager, _Array, _as_str, _batch, _tqdm
+from .backtesting import Backtest, Strategy
 
 __pdoc__ = {}
 
@@ -538,19 +541,110 @@ for cls in list(globals().values()):
         __pdoc__[f"{cls.__name__}.__init__"] = False
 
 
+class FractionalBacktest(Backtest):
+    """
+    A `backtesting.backtesting.Backtest` that supports fractional share trading
+    by simple composition. It applies roughly the transformation:
+
+        df = (df / satoshi).assign(Volume=df.Volume * satoshi)
+
+    as unchallenged in [this FAQ entry on GitHub](https://github.com/kernc/backtesting.py/issues/134),
+    then passes `data`, `args*`, and `**kwargs` to its super.
+
+    Parameter `satoshi` tells the amount of scaling to do. E.g. for
+    μBTC trading, pass `satoshi=1e6`.
+    """
+    def __init__(self,
+                 data,
+                 *args,
+                 satoshi=int(100e6),
+                 **kwargs):
+        data = data.copy()
+        data[['Open', 'High', 'Low', 'Close']] /= satoshi
+        data['Volume'] *= satoshi
+        super().__init__(data, *args, **kwargs)
+
+
+# Prevent pdoc3 documenting __init__ signature of Strategy subclasses
+for cls in list(globals().values()):
+    if isinstance(cls, type) and issubclass(cls, Strategy):
+        __pdoc__[f'{cls.__name__}.__init__'] = False
+
+
+class MultiBacktest:
+    """
+    Multi-dataset `backtesting.backtesting.Backtest` wrapper.
+
+    Run supplied `backtesting.backtesting.Strategy` on several instruments,
+    in parallel.  Used for comparing strategy runs across many instruments
+    or classes of instruments. Example:
+
+        from backtesting.test import EURUSD, BTCUSD, SmaCross
+        btm = MultiBacktest([EURUSD, BTCUSD], SmaCross)
+        stats_per_ticker: pd.DataFrame = btm.run(fast=10, slow=20)
+        heatmap_per_ticker: pd.DataFrame = btm.optimize(...)
+    """
+    def __init__(self, df_list, strategy_cls, **kwargs):
+        self._dfs = df_list
+        self._strategy = strategy_cls
+        self._bt_kwargs = kwargs
+
+    def run(self, **kwargs):
+        """
+        Wraps `backtesting.backtesting.Backtest.run`. Returns `pd.DataFrame` with
+        currency indexes in columns.
+        """
+        with mp.Pool() as pool, \
+                SharedMemoryManager() as smm:
+            shm = [smm.df2shm(df) for df in self._dfs]
+            results = _tqdm(
+                pool.imap(self._mp_task_run,
+                          ((df_batch, self._strategy, self._bt_kwargs, kwargs)
+                           for df_batch in _batch(shm))),
+                total=len(shm),
+                desc=self.__class__.__name__,
+            )
+            df = pd.DataFrame(list(chain(*results))).transpose()
+        return df
+
+    @staticmethod
+    def _mp_task_run(args):
+        data_shm, strategy, bt_kwargs, run_kwargs = args
+        dfs, shms = zip(*(SharedMemoryManager.shm2df(i) for i in data_shm))
+        try:
+            return [stats.filter(regex='^[^_]') if stats['# Trades'] else None
+                    for stats in (Backtest(df, strategy, **bt_kwargs).run(**run_kwargs)
+                                  for df in dfs)]
+        finally:
+            for shmem in chain(*shms):
+                shmem.close()
+
+    def optimize(self, **kwargs) -> pd.DataFrame:
+        """
+        Wraps `backtesting.backtesting.Backtest.optimize`, but returns `pd.DataFrame` with
+        currency indexes in columns.
+
+            heamap: pd.DataFrame = btm.optimize(...)
+            from backtesting.plot import plot_heatmaps
+            plot_heatmaps(heatmap.mean(axis=1))
+        """
+        heatmaps = []
+        # Simple loop since bt.optimize already does its own multiprocessing
+        for df in _tqdm(self._dfs, desc=self.__class__.__name__):
+            bt = Backtest(df, self._strategy, **self._bt_kwargs)
+            _best_stats, heatmap = bt.optimize(  # type: ignore
+                return_heatmap=True, return_optimization=False, **kwargs)
+            heatmaps.append(heatmap)
+        heatmap = pd.DataFrame(dict(zip(count(), heatmaps)))
+        return heatmap
+
+
 # NOTE: Don't put anything below this __all__ list
 
-__all__ = [
-    getattr(v, "__name__", k)
-    for k, v in globals().items()  # export
-    if (
-        (
-            callable(v)
-            and v.__module__ == __name__  # callables from this module
-            or k.isupper()
-        )  # or CONSTANTS
-        and not getattr(v, "__name__", k).startswith("_")
-    )
-]  # neither marked internal
+__all__ = [getattr(v, '__name__', k)
+           for k, v in globals().items()                        # export
+           if ((callable(v) and v.__module__ == __name__ or     # callables from this module
+                k.isupper()) and                                # or CONSTANTS
+               not getattr(v, '__name__', k).startswith('_'))]  # neither marked internal
 
 # NOTE: Don't put anything below here. See above.
