@@ -58,6 +58,7 @@ def _as_list(value) -> List:
         return list(value)
     return [value]
 
+
 def _batch(seq):
     # XXX: Replace with itertools.batched
     n = np.clip(int(len(seq) // (os.cpu_count() or 1)), 1, 300)
