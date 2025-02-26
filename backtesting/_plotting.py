@@ -36,7 +36,7 @@ from bokeh.layouts import gridplot
 from bokeh.palettes import Category10
 from bokeh.transform import factor_cmap
 
-from multibacktesting2._util import _data_period, _as_list, _Indicator
+from backtesting._util import _data_period, _as_list, _Indicator
 
 with open(
     os.path.join(os.path.dirname(__file__), "autoscale_cb.js"), encoding="utf-8"

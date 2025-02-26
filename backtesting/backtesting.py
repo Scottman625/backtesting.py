@@ -866,7 +866,7 @@ class _Broker:
     def new_order(
         self,
         size: float,
-        stock: int,
+        stock: str,
         limit: Optional[float] = None,
         stop: Optional[float] = None,
         sl: Optional[float] = None,
@@ -1591,7 +1591,7 @@ class Backtest:
                 # 選擇當前批次的數據
                 current_batch = self._data.loc[
                     self._data["date"] == current_date
-                ].compute()
+                ]
                 # print('001')
                 # 處理當前批次的數據
                 # historical_data = process_batch(current_batch, historical_data)
