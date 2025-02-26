@@ -7,6 +7,9 @@ from itertools import cycle, combinations
 from functools import partial
 from typing import Callable, List, Union
 
+import decimal
+from collections.abc import Mapping, Iterable
+
 import numpy as np
 import pandas as pd
 
@@ -38,7 +41,7 @@ from bokeh.layouts import gridplot
 from bokeh.palettes import Category10
 from bokeh.transform import factor_cmap
 
-from multibacktesting._util import _data_period, _as_list, _Indicator
+from multibacktesting2._util import _data_period, _as_list, _Indicator
 
 with open(os.path.join(os.path.dirname(__file__), 'autoscale_cb.js'),
           encoding='utf-8') as _f:
@@ -656,7 +659,7 @@ return this.labels[index] || "";
     kwargs = {}
     if plot_width is None:
         kwargs['sizing_mode'] = 'stretch_width'
-
+    
     fig = gridplot(
         plots,
         ncols=1,

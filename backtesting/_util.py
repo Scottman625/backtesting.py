@@ -1,8 +1,6 @@
 import warnings
 from numbers import Number
 from typing import Dict, List, Optional, Sequence, Union, cast
-import dask.dataframe as dd
-import dask.array as da
 
 import numpy as np
 import pandas as pd
@@ -107,7 +105,7 @@ class _Data:
     and the returned "series" are _not_ `pd.Series` but `np.ndarray`
     for performance reasons.
     """
-    def __init__(self, df: dd):
+    def __init__(self, df):
         self.__df = df
         self.__i = len(df)
         self.__pip: Optional[float] = None
