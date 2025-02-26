@@ -37,7 +37,7 @@ except ImportError:
 
 
 from ._plotting import plot  # noqa: I001
-from ._stats import compute_stats, compute_multiple_stats
+from ._stats import compute_multiple_stats
 from ._util import _as_str, _Indicator, _Data, try_
 
 __pdoc__ = {
@@ -86,7 +86,7 @@ class Strategy(metaclass=ABCMeta):
             setattr(self, k, v)
         return params
 
-    def I(
+    def calculate_indicator(
         self,  # noqa: E743
         func: Callable,
         *args,
@@ -131,7 +131,7 @@ class Strategy(metaclass=ABCMeta):
         For example, using simple moving average function from TA-Lib:
 
             def init():
-                self.sma = self.I(ta.SMA, self.data.Close, self.n_sma)
+                self.sma = self.calculate_indicator(ta.SMA, self.data.Close, self.n_sma)
         """
         if name is None:
             params = ",".join(filter(None, map(_as_str, chain(args, kwargs.values()))))
@@ -167,7 +167,7 @@ class Strategy(metaclass=ABCMeta):
             raise ValueError(
                 "Indicators must return (optionally a tuple of) numpy.arrays of same "
                 f'length as `data` (data shape: {self._data.Close.shape}; indicator "{name}" '
-                f'shape: {getattr(value, "shape" , "")}, returned value: {value})'
+                f'shape: {getattr(value, "shape", "")}, returned value: {value})'
             )
 
         if plot and overlay is None and np.issubdtype(value.dtype, np.number):
@@ -195,7 +195,7 @@ class Strategy(metaclass=ABCMeta):
         """
         Initialize the strategy.
         Override this method.
-        Declare indicators (with `backtesting.backtesting.Strategy.I`).
+        Declare indicators (with `backtesting.backtesting.Strategy.calculate_indicator`).
         Precompute what needs to be precomputed or can be precomputed
         in a vectorized fashion before the strategy starts.
 
@@ -728,9 +728,10 @@ class Trade:
         try:
             exit_time_date = unique_dates[exit_bar_value]
             return exit_time_date
-        except:
+        except Exception as e:
             print("exit_bar_value:", exit_bar_value)
             print("Length of df_pandas:", len(unique_dates))
+            raise e
 
     @property
     def is_long(self):
@@ -885,7 +886,6 @@ class _Broker:
 
         is_long = size > 0
         adjusted_price = self._adjusted_price(size=size, stock=stock)
-        price = self.last_price(stock)
 
         if is_long:
             if not (sl or -np.inf) < (limit or stop or adjusted_price) < (tp or np.inf):
@@ -964,9 +964,8 @@ class _Broker:
                     stock_price = self.get_stock_price(stock=stock)
                     # print(position['quantity'],stock_price)
                     total_stock_value += position["quantity"] * stock_price
-                except:
-                    # print(current_date)
-                    pass
+                except Exception as e:
+                    raise e
 
             total_equity = self._cash + total_stock_value
 
@@ -999,7 +998,8 @@ class _Broker:
                     ]
                     adjust_price = filtered_stock_data["Close"].iloc[0]
                     return adjust_price
-                except:
+                except Exception as e:
+                    print(e)
                     continue
 
     def last_price(self, stock) -> float:
@@ -1008,12 +1008,13 @@ class _Broker:
             return self._data.filtered_data[
                 self._data.filtered_data["stock_id"] == stock
             ].Close.iloc[-1]
-        except:
+        except Exception as e:
             print(
                 self._data.filtered_data[
                     self._data.filtered_data["stock_id"] == stock
                 ].Close
             )
+            raise e
 
     def _adjusted_price(self, stock, size=None, price=None) -> float:
         """
@@ -1167,7 +1168,7 @@ class _Broker:
                     if is_market_order and self._trade_on_close
                     else self._i
                 )
-                # If order is a SL/TP order, it should close an existing trade it was contingent upon
+                # If order is a SL/TP one, it should close an existing trade it was contingent upon
                 if order.parent_trade:
                     trade = order.parent_trade
                     _prev_size = trade.size
@@ -1243,7 +1244,8 @@ class _Broker:
                     ):
                         self.orders.remove(order)
                         continue
-                except:
+                except Exception as e:
+                    print(e)
                     pass
 
                 # Open a new trade
@@ -1269,14 +1271,14 @@ class _Broker:
                             or low <= (order.tp or -np.inf) <= high
                         ):
                             warnings.warn(
-                                f"({data.index[-1]}) A contingent SL/TP order would execute in the "
-                                "same bar its parent stop/limit order was turned into a trade. "
-                                "Since we can't assert the precise intra-candle "
-                                "price movement, the affected SL/TP order will instead be executed on "
-                                "the next (matching) price/bar, making the result (of this trade) "
-                                "somewhat dubious. "
-                                "See https://github.com/kernc/backtesting.py/issues/119",
-                                UserWarning,
+                        f"({data.index[-1]}) A contingent SL/TP order would execute in the "
+                        "same bar its parent stop/limit order was turned into a trade. "
+                        "Since we can't assert the precise intra-candle "
+                        "price movement, the affected SL/TP order will instead be executed on "
+                        "the next (matching) price/bar, making the result (of this trade) "
+                        "somewhat dubious. "
+                        "See https://github.com/kernc/backtesting.py/issues/119",
+                        UserWarning,
                             )
 
                 # Order processed
@@ -1587,7 +1589,7 @@ class Backtest:
         #                   'but `pd.DateTimeIndex` is advised.',
         #                   stacklevel=2)
 
-        self._data: dd = data
+        self._data: pd.DataFrame = data
         self._broker = partial(
             _Broker,
             cash=cash,
@@ -1601,9 +1603,6 @@ class Backtest:
         # print('data index is :' + str(data.index))
         self._strategy = strategy
         self._results: Optional[pd.Series] = None
-
-        # all_dates = pd.to_datetime(self._data['date']).unique().normalize()
-        # all_dates = pd.Series(all_dates).sort_values().values  # 转换为 Series，使用 sort_values，然后取 values
 
         # 獲取唯一的日期並排序
         unique_dates = self._data["date"].drop_duplicates().compute()
@@ -1668,25 +1667,7 @@ class Backtest:
         #                    for attr, indicator in strategy.__dict__.items()
         #                    if isinstance(indicator, _Indicator)}.items()
 
-        # def process_batch(current_batch, historical_data=None):
-        #     # 合併當前批次和歷史數據
-        #     if historical_data is not None:
-        #         combined_data = pd.concat([historical_data, current_batch])
-        #     else:
-        #         combined_data = current_batch
-
-        #     current_date_ts = pd.Timestamp(current_date)
-        #     # 計算當前日期之前5天的日期
-        #     five_days_ago = current_date_ts - pd.Timedelta(days=5)
-        #     # 篩選出最新的五天數據
-        #     # 注意: 這裡包含了當前日期
-        #     current_data_up_to_date = combined_data[(combined_data['date'] > five_days_ago) & (combined_data['date'] <= current_date)]
-        #     return  current_data_up_to_date
-
-        # # 初始化歷史數據變量
-        # historical_data = None
-
-        # progress_len = len(self._all_dates)
+  
 
         with np.errstate(invalid="ignore"):
             i = 0
@@ -1927,7 +1908,7 @@ class Backtest:
             def _batch(seq):
                 n = np.clip(int(len(seq) // (os.cpu_count() or 1)), 1, 300)
                 for i in range(0, len(seq), n):
-                    yield seq[i : i + n]
+                    yield seq[i: i + n]
 
             # Save necessary objects into "global" state; pass into concurrent executor
             # (and thus pickle) nothing but two numbers; receive nothing but numbers.

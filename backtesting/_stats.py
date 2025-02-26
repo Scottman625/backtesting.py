@@ -25,7 +25,7 @@ def compute_drawdown_duration_peaks(dd: pd.Series):
         dd.index.__getitem__
     )
     df["peak_dd"] = df.apply(
-        lambda row: dd.iloc[row["prev"] : row["iloc"] + 1].max(), axis=1
+        lambda row: dd.iloc[row["prev"]: row["iloc"] + 1].max(), axis=1
     )
 
     df = df.reindex(dd.index)
@@ -103,7 +103,7 @@ def compute_stats(
 
     have_position = np.repeat(0, len(index))
     for t in trades_df.itertuples(index=False):
-        have_position[t.EntryBar : t.ExitBar + 1] = 1
+        have_position[t.EntryBar: t.ExitBar + 1] = 1
 
     s.loc["Exposure Time [%]"] = (
         have_position.mean() * 100
@@ -267,7 +267,7 @@ def compute_multiple_stats(
 
         have_position = np.repeat(0, len(index))
         for t in trades_df.itertuples(index=False):
-            have_position[t.EntryBar : t.ExitBar + 1] = 1
+            have_position[t.EntryBar: t.ExitBar + 1] = 1
 
         s.loc["Exposure Time [%]"] = (
             have_position.mean() * 100
