@@ -3,6 +3,7 @@ on:
   push: { branches: [master] }
   pull_request: { branches: [master] }
   schedule: [ cron: '2 2 * * 6' ]  # Every Saturday, 02:02
+  workflow_dispatch:  
 
 jobs:
   build:

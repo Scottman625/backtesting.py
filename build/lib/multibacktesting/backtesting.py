@@ -640,12 +640,12 @@ class Trade:
     @property
     def entry_time(self) -> Union[pd.Timestamp, int]:
         """Datetime of when the trade was entered."""
-        # 直接计算所需位置的索引值
-        # 假设self.__entry_bar是入场位置的整数索引
+        # 直接計算所需位置的索引值
+        # 假設self.__entry_bar是入場位置的整數索引
         entry_bar_value = self.__entry_bar
         unique_dates = self.__broker._data.__getdata__()['date'].compute().unique()
 
-        # 使用Pandas的`.iloc`进行行选择
+        # 使用Pandas的`.iloc`進行行選擇
         entry_time_date = unique_dates[entry_bar_value]
         return entry_time_date
 
@@ -655,13 +655,13 @@ class Trade:
         """Datetime of when the trade was exited."""
         if self.__exit_bar is None:
             return None
-        # 直接计算所需位置的索引值
+        # 直接計算所需位置的索引值
 
-        # 假设self.__entry_bar是入场位置的整数索引
+        # 假設self.__entry_bar是入場位置的整數索引
         exit_bar_value = self.__exit_bar
         unique_dates = self.__broker._data.__getdata__()['date'].compute().unique()
 
-        # 使用Pandas的`.iloc`进行行选择
+        # 使用Pandas的`.iloc`進行行選擇
         try:
             exit_time_date = unique_dates[exit_bar_value]
             return exit_time_date
@@ -763,28 +763,27 @@ class _Broker:
         unique_dates = self._data.__getdata__()['date'].compute().unique()
         print(f'df_pandas: {unique_dates}')
 
-        # 假设 self._data.df['date'] 是包含日期时间戳的列
+        # 假設 self._data.df['date'] 是包含日期時間戳的列
         myData = self._data.__getdata__()
         if isinstance(myData, pd.DataFrame):
-            print("这是一个 Pandas DataFrame")
+            print("這是一個 Pandas DataFrame")
             dateIndex = self._data.__getdata__()['date']
         elif isinstance(myData, dd.DataFrame):
-            print("这是一个 Dask DataFrame!!!!")
+            print("這是一個 Dask DataFrame")
             dateIndex = self._data.__getdata__()['date'].compute()
         else:
-            print("未知的 DataFrame 类型")
-        index = pd.to_datetime(dateIndex)  # 转换为日期，并且标准化时间为00:00:00
-        # unique_dates = pd.Index(index.unique().date)  # 转换为日期对象，并去重
+            print("未知的 DataFrame 類型")
+        index = pd.to_datetime(dateIndex)  # 轉換為日期，並且標準化時間為00:00:00
         unique_dates = pd.Index(index.dt.date.unique())
 
-        # 使用去重后的日期作为索引创建Series
+        # 使用去重後日期建立 Series
         self._equity = pd.Series(index=unique_dates, dtype=float)
 
         self.orders: List[Order] = []
         self.trades: List[Trade] = []
         self.position = Position(self)
         self.closed_trades: List[Trade] = []
-        self.positions = {}  # 字典，用于跟踪每支股票的持仓信息
+        self.positions = {}  # 字典，用於跟踪持倉
         self._current_date = None
 
     def __repr__(self):
@@ -854,7 +853,7 @@ class _Broker:
             position = self.positions[stock]
             new_quantity = position['quantity'] + size
             if new_quantity == 0:
-                del self.positions[stock]  # 清空持仓
+                del self.positions[stock]  # 清空持倉
             else:
 
                 new_average_price = (position['average_price'] * position['quantity'] + price * size) / new_quantity
@@ -871,7 +870,7 @@ class _Broker:
             total_equity = init_value
         else:
             for stock, position in self.positions.items():
-                # 假设有方法 self.get_stock_price 来获取当前股票价格
+                # 假設有方法 self.get_stock_price 來獲取當前股票價格
                 try:
                     stock_price = self.get_stock_price(stock=stock)
                     # print(position['quantity'],stock_price)
@@ -882,7 +881,7 @@ class _Broker:
 
             total_equity = self._cash + total_stock_value
 
-        # 更新 self._equity Series 的相应日期条目
+        # 更新 self._equity Series 的相應日期條目
         current_date = pd.Timestamp(current_date).date()
         # print('update_equity')
         self._equity[current_date] = total_equity
@@ -936,9 +935,8 @@ class _Broker:
         return max(0, self.equity - margin_used)
 
     def next(self):
-        # 假设 current_date 已经是一个 pd.Timestamp 或能够被转换为 Timestamp 的对象
         
-        # 更新总资产并获取当前的总资产值
+        # 更新總資產並獲取當前的總資產淨值
 
         # i = self._i = len(self._data.filtered_data) - 1
         i = self._i = self._data._get_length()
@@ -960,14 +958,14 @@ class _Broker:
             raise _OutOfMoneyError
 
 
-        # 如果总资产净值为负，终止模拟
+        # 如果總資產淨值為負，中止模擬
         
     def _handle_negative_equity(self, current_date):
         assert self.margin_available <= 0
         for trade in self.trades:
-            self._close_trade(trade, self._data.filtered_data.Close.iloc[-1], current_date)  # 确保_close_trade方法能接受日期参数
+            self._close_trade(trade, self._data.filtered_data.Close.iloc[-1], current_date)  # Close at current price
         self._cash = 0
-        self._equity[current_date:] = 0  # 注意：这一行可能需要调整，因为直接设置 pd.Series 切片为 0 可能不适用
+        self._equity[current_date:] = 0  
         raise _OutOfMoneyError
     
     def _process_orders(self):
@@ -1054,7 +1052,7 @@ class _Broker:
             # precompute true size in units, accounting for margin and spread/commissions
             size = order.size
             if -1 < size < 1:
-                size = copysign(int((self.margin_available(order.stock) * self._leverage * abs(size))
+                size = copysign(int((self.margin_available() * self._leverage * abs(size))
                                     // adjusted_price), size)
                 # Not enough cash/margin even for a single unit
                 if not size:
@@ -1087,7 +1085,7 @@ class _Broker:
 
             # If we don't have enough liquidity to cover for the order, cancel it
             try:
-                if abs(need_size) * adjusted_price > self.margin_available(order.stock) * self._leverage:
+                if abs(need_size) * adjusted_price > self.margin_available() * self._leverage:
                     self.orders.remove(order)
                     continue
             except:
@@ -1142,17 +1140,16 @@ class _Broker:
             if trade not in self.trades:
                 continue
             time_index = self._i
-            #  检查止损条件是否触发
+            #  檢查止損條件是否觸發
             if  (low <= trade.entry_price * 0.8):
-                # 执行止损交易，平仓
-                # 你可能需要根据你的实际情况来调整这里的执行逻辑
+                # 執行止損交易，平倉
                 self._close_trade(trade, trade.entry_price * 0.8,time_index)
 
-            # 检查止盈条件是否触发
+            # 檢查止盈條件是否觸發
 
             if (high >= trade.entry_price * 1.2):
-                # 执行止盈交易，平仓
-                # 同样，根据实际情况调整
+                # 執行止盈交易，平倉
+                # 同樣，根據實際情況調整執行邏輯
                 self._close_trade(trade, trade.entry_price * 1.2,time_index)
 
     def _reduce_trade(self, trade: Trade, price: float, size: float, time_index):
@@ -1283,31 +1280,31 @@ class Backtest:
                             'entry order price')
 
 
-        # 异步计算以确定索引类型
+        # 異步計算已確定索引類型
         index_type = data.index.compute()
 
-        # 将索引转换为 datetime index
+        # 將索引轉換為 datetime index
         if (not isinstance(index_type, pd.DatetimeIndex) and
                 not isinstance(index_type, pd.RangeIndex) and
-                # 异步计算以检查索引是否为数字，并且大多数值大于1975年的时间戳
+                # 異步計算以檢查索引是否為數字，並且大多數值大於1975年的時間戳
                 (data.index.map_partitions(lambda x: pd.to_numeric(x, errors='coerce').notnull()).mean().compute() > .8) and
                 (data.index.map_partitions(lambda x: (x > pd.Timestamp('1975').timestamp())).mean().compute() > .8)):
             try:
-                # 注意：这会将整个索引加载到内存中进行转换，可能会导致性能问题
+                # 注意: 這將會導致所有分區的索引都被轉換為 datetime
                 data['index_as_datetime'] = data.map_partitions(lambda df: pd.to_datetime(df.index, infer_datetime_format=True))
                 data = data.set_index('index_as_datetime', sorted=True)
             except ValueError:
                 pass
 
-        # # 检查Volume列是否存在，如果不存在则添加
+        # # 檢查Volume列是否存在
         # if 'Volume' not in data.columns:
         #     data['Volume'] = np.nan
 
-        # # 异步计算以检查数据长度
+        # # 異步計算已檢查數據是否為空
         # if len(data) == 0:
         #     raise ValueError('OHLC `data` is empty')
 
-        # # 异步计算以检查必要的列是否存在
+        # # 異步計算以檢查列是否存在
         # required_columns = {'Open', 'High', 'Low', 'Close', 'Volume'}
         # columns_exist = data.columns.intersection(required_columns)
         # if len(columns_exist.compute()) != len(required_columns):
@@ -1372,13 +1369,11 @@ class Backtest:
         #                   stacklevel=2)
 
         self._data: dd = data
-        print("test hello world a")
         self._broker = partial(
             _Broker, cash=cash, commission=commission, margin=margin,
             trade_on_close=trade_on_close, hedging=hedging,
             exclusive_orders=exclusive_orders, index=data.index,
         )
-        print("test hello world b")
         # print('data index is :' + str(data.index))
         self._strategy = strategy
         self._results: Optional[pd.Series] = None
@@ -1386,14 +1381,11 @@ class Backtest:
         # all_dates = pd.to_datetime(self._data['date']).unique().normalize()
         # all_dates = pd.Series(all_dates).sort_values().values  # 转换为 Series，使用 sort_values，然后取 values
 
-        # 获取唯一的日期并排序
-        print("test hello world c")
+        # 獲取唯一的日期並排序
         unique_dates = self._data['date'].drop_duplicates().compute()
         unique_dates = unique_dates.sort_values()
-        print("test hello world d")
         self._all_dates = unique_dates
         self._cash = cash
-        print("test hello world e")
 
     
     def run(self, **kwargs) -> pd.Series:
@@ -1446,76 +1438,52 @@ class Backtest:
         data = _Data(self._data.copy(deep=False))
         broker: _Broker = self._broker(data=data)
         strategy: Strategy = self._strategy(broker, data, kwargs)
-        print("test run method a")
         strategy.init()
         data._update()  # Strategy.init might have changed/added to data.df
-        print("test run method b")
         # Indicators used in Strategy.next()
         # indicator_attrs = {attr: indicator
         #                    for attr, indicator in strategy.__dict__.items()
         #                    if isinstance(indicator, _Indicator)}.items()
 
         def process_batch(current_batch, historical_data=None):
-            # 合并历史数据和当前批次的数据
+            # 合併當前批次和歷史數據
             if historical_data is not None:
-                print("test process_batch a")
                 combined_data = pd.concat([historical_data, current_batch])
             else:
-                print("test process_batch b")
                 combined_data = current_batch
-            print("test process_batch c")
-            # 返回处理后的数据和用于下一批次的历史数据
+
             current_date_ts = pd.Timestamp(current_date)
-            print("test process_batch d")
-            # 计算5天前的日期
+            # 計算當前日期之前5天的日期
             five_days_ago = current_date_ts - pd.Timedelta(days=5)
-            print("test process_batch e")
-            # 筛选出当前日期之前5天内的所有数据
-            # 注意：这里包括了当前日期当天的数据，如果不需要当天的数据，可以将条件改为 < current_date
+            # 篩選出最新的五天數據
+            # 注意: 這裡包含了當前日期
             current_data_up_to_date = combined_data[(combined_data['date'] > five_days_ago) & (combined_data['date'] <= current_date)]
-            print("test process_batch f")
-            return  current_data_up_to_date  # 假设这里返回了处理后的数据和最新的五天数据
+            return  current_data_up_to_date  
         
-        # 初始化历史数据变量
+        # 初始化歷史數據變量
         historical_data = None
 
         # progress_len = len(self._all_dates)
         
-        print("test b-0")
         with np.errstate(invalid='ignore'):
             i = 0
-            print("test run method b-1")
             print(f"len of all dates: {len(self._all_dates)}")
             for current_date in self._all_dates:
                 print(f"current_date: {current_date}")
-                # if ((i -1) / progress_len < 0.2) and (i / progress_len > 0.2):
-                #     print('progress is now 20 %')
-                # elif((i -1) / progress_len < 0.4) and (i / progress_len > 0.4):
-                #     print('progress is now 40 %')
-                # elif((i -1) / progress_len < 0.6) and (i / progress_len > 0.6):
-                #     print('progress is now 60 %')
-                # elif((i -1) / progress_len < 0.8) and (i / progress_len > 0.8):
-                #     print('progress is now 80 %')
-                # elif((i -1) / progress_len < 1) and (i / progress_len == 1):
-                #     print("progress is 100% complete")
-                # print(current_date)
-                # 选择当前批次的数据
-                # current_batch = self._data.loc[self._data['date'].between(start_date, end_date)]
+
+                # 選擇當前批次的數據
                 current_batch = self._data.loc[self._data['date']==current_date].compute()
-                print("test run method c")
-                # 处理当前批次
+                # 處理當前批次的數據
                 historical_data = process_batch(current_batch, historical_data)
-                print("test run method d")
-                # 在这里执行你的数据处理逻辑...
-                # 例如，计算当前批次中每条记录基于过去五天数据的某个指标
+                # 更新日期為當前日期
                 broker.update_current_date(current_date)
-                print("test run method e")
+                # 更新數據
                 data.set_data(historical_data)
 
-                # 处理订单和经纪人事务
+                # 處理訂單
                 try:
                     broker.next()
-                    # 为了简化，我们假设 strategy.next 方法已经被修改为接受当前数据作为参数
+                    # 進行策略迭代
                     strategy.next(historical_data)
                 except _OutOfMoneyError:
                     pass
@@ -1524,11 +1492,11 @@ class Backtest:
                 i += 1
   
             else:
-                # 关闭任何剩余的开放交易
+                # 關閉任何未平倉的交易
                 for trade in broker.trades:
                     trade.close(trade.stock)
 
-                # 重新运行 broker 一次，以处理最后一次策略迭代中下达的订单
+                # 重新運行broker.next()以更新最後一天的資產
                 if self._all_dates.size > 0:
                     try_(broker.next, exception=_OutOfMoneyError)
 

@@ -1052,7 +1052,7 @@ class _Broker:
             # precompute true size in units, accounting for margin and spread/commissions
             size = order.size
             if -1 < size < 1:
-                size = copysign(int((self.margin_available(order.stock) * self._leverage * abs(size))
+                size = copysign(int((self.margin_available() * self._leverage * abs(size))
                                     // adjusted_price), size)
                 # Not enough cash/margin even for a single unit
                 if not size:
@@ -1085,7 +1085,7 @@ class _Broker:
 
             # If we don't have enough liquidity to cover for the order, cancel it
             try:
-                if abs(need_size) * adjusted_price > self.margin_available(order.stock) * self._leverage:
+                if abs(need_size) * adjusted_price > self.margin_available() * self._leverage:
                     self.orders.remove(order)
                     continue
             except:

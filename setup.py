@@ -10,7 +10,7 @@ if __name__ == '__main__':
 
     setup(
         name='multibacktesting',
-        version='0.0.6',
+        version='0.0.7',
         description="Backtest trading strategies in Python",
         license='AGPL-3.0',
         url='https://kernc.github.io/backtesting.py/',
