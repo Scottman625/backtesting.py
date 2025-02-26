@@ -1303,8 +1303,7 @@ class _Broker:
             data = self._data.filtered_data[
                 self._data.filtered_data["stock_id"] == trade.stock
             ]
-            open, high, low = (
-                data["Open"].iloc[-1],
+            high, low = (
                 data["High"].iloc[-1],
                 data["Low"].iloc[-1],
             )
@@ -1459,142 +1458,51 @@ class Backtest:
         """
         # data = self.load_stock_data()
 
-        if not (isinstance(strategy, type) and issubclass(strategy, Strategy)):
-            raise TypeError("`strategy` must be a Strategy sub-type")
+        # if not (isinstance(strategy, type) and issubclass(strategy, Strategy)):
+        #     raise TypeError('`strategy` must be a Strategy sub-type')
         # if not isinstance(data, pd.DataFrame):
         #     raise TypeError("`data` must be a pandas.DataFrame with columns")
         if not isinstance(commission, Number):
-            raise TypeError(
-                "`commission` must be a float value, percent of " "entry order price"
-            )
+            raise TypeError('`commission` must be a float value, percent of '
+                            'entry order price')
 
-        # 異步計算已確定索引類型
-        index_type = data.index.compute()
-
-        # 將索引轉換為 datetime index
-        if (
-            not isinstance(index_type, pd.DatetimeIndex)
-            and not isinstance(index_type, pd.RangeIndex)
-            and
-            # 異步計算以檢查索引是否為數字，並且大多數值大於1975年的時間戳
-            (
-                data.index.map_partitions(
-                    lambda x: pd.to_numeric(x, errors="coerce").notnull()
-                )
-                .mean()
-                .compute()
-                > 0.8
-            )
-            and (
-                data.index.map_partitions(
-                    lambda x: (x > pd.Timestamp("1975").timestamp())
-                )
-                .mean()
-                .compute()
-                > 0.8
-            )
-        ):
+        data = data.copy(deep=False)
+        # Convert index to datetime index
+        if (not isinstance(data.index, pd.DatetimeIndex) and
+            not isinstance(data.index, pd.RangeIndex) and
+            # Numeric index with most large numbers
+            (data.index.is_numeric() and
+             (data.index > pd.Timestamp('1975').timestamp()).mean() > .8)):
             try:
-                # 注意: 這將會導致所有分區的索引都被轉換為 datetime
-                data["index_as_datetime"] = data.map_partitions(
-                    lambda df: pd.to_datetime(df.index, infer_datetime_format=True)
-                )
-                data = data.set_index("index_as_datetime", sorted=True)
+                data.index = pd.to_datetime(data.index, infer_datetime_format=True)
             except ValueError:
                 pass
 
-        # # 檢查Volume列是否存在
-        # if 'Volume' not in data.columns:
-        #     data['Volume'] = np.nan
+        if 'Volume' not in data:
+            data['Volume'] = np.nan
 
-        # # 異步計算已檢查數據是否為空
-        # if len(data) == 0:
-        #     raise ValueError('OHLC `data` is empty')
-
-        # # 異步計算以檢查列是否存在
-        # required_columns = {'Open', 'High', 'Low', 'Close', 'Volume'}
-        # columns_exist = data.columns.intersection(required_columns)
-        # if len(columns_exist.compute()) != len(required_columns):
-        #     raise ValueError("`data` must be a dask.DataFrame with columns 
-        # 'Open', 'High', 'Low', 'Close', and (optionally) 'Volume'")
-
-        # 检查OHLC列是否有任何NaN值
-        if (
-            data[["Open", "High", "Low", "Close"]]
-            .map_partitions(lambda df: df.isnull().values.any())
-            .compute()
-            .any()
-        ):
-            raise ValueError(
-                "Some OHLC values are missing (NaN). Please strip those lines with `df.dropna()` "
-                "or fill them in with `df.interpolate()` or whatever."
-            )
-
-        # 这里假设`cash`是一个已经定义的变量
-        # 异步计算以检查Close价格是否大于初始现金值
-        if (
-            data["Close"]
-            .map_partitions(lambda df: df.isnull().values.any())
-            .compute()
-            .any()
-        ):
-            warnings.warn(
-                "Some prices are larger than initial cash value."
-                 " Note that fractional trading is not supported. "
-                "If you want to trade Bitcoin, increase initial cash, "
-                "or trade μBTC or satoshis instead (GH-134).",
-                stacklevel=2,
-            )
-
-        # # 检查所有分区的索引是否都是单调递增的
-        # if not data.map_partitions(lambda x: x.index.is_monotonic_increasing).all().compute():
-        #     warnings.warn('Data index is not sorted in ascending order. Sorting.', stacklevel=2)
-        #     data = data.map_partitions(lambda df: df.sort_index())
-
-        # 再次检查索引是否为DatetimeIndex，这可能需要显式地将索引转换为DatetimeIndex
-        # 由于Dask的惰性计算特性，这里我们不再进行检查，而是提出警告建议
-        warnings.warn(
-            "Ensure data index is datetime. Assuming simple periods, "
-            "but `pd.DateTimeIndex` is advised.",
-            stacklevel=2,
-        )
-
-        # # Convert index to datetime index
-        # if (not isinstance(data.index, pd.DatetimeIndex) and
-        #     not isinstance(data.index, pd.RangeIndex) and
-        #     # Numeric index with most large numbers
-        #     (data.index.is_numeric() and
-        #      (data.index > pd.Timestamp('1975').timestamp()).mean() > .8)):
-        #     try:
-        #         data.index = pd.to_datetime(data.index, infer_datetime_format=True)
-        #     except ValueError:
-        #         pass
-
-        # if 'Volume' not in data:
-        #     data['Volume'] = np.nan
-
-        # if len(data) == 0:
-        #     raise ValueError('OHLC `data` is empty')
-        # if len(data.columns.intersection({'Open', 'High', 'Low', 'Close', 'Volume'})) != 5:
-        #     raise ValueError("`data` must be a pandas.DataFrame with columns "
-        #                      "'Open', 'High', 'Low', 'Close', and (optionally) 'Volume'")
-        # if data[['Open', 'High', 'Low', 'Close']].isnull().values.any():
-        #     raise ValueError('Some OHLC values are missing (NaN). '
-        #                      'Please strip those lines with `df.dropna()` or '
-        #                      'fill them in with `df.interpolate()` or whatever.')
-        # if np.any(data['Close'] > cash):
-        #     warnings.warn('Some prices are larger than initial cash value. Note that fractional '
-        #                   'trading is not supported. If you want to trade Bitcoin, '
-        #                   'increase initial cash, or trade μBTC or satoshis instead (GH-134).',
-        #                   stacklevel=2)
-        # if not data.index.is_monotonic_increasing:
-        #     warnings.warn('Data index is not sorted in ascending order. Sorting.',
-        #                   stacklevel=2)
-        #     data = data.sort_index()
-        # if not isinstance(data.index, pd.DatetimeIndex):
-        #     warnings.warn('Data index is not datetime. Assuming simple periods, '
-        #                   'but `pd.DateTimeIndex` is advised.',
-        #                   stacklevel=2)
+        if len(data) == 0:
+            raise ValueError('OHLC `data` is empty')
+        if len(data.columns.intersection({'Open', 'High', 'Low', 'Close', 'Volume'})) != 5:
+            raise ValueError("`data` must be a pandas.DataFrame with columns "
+                             "'Open', 'High', 'Low', 'Close', and (optionally) 'Volume'")
+        if data[['Open', 'High', 'Low', 'Close']].isnull().values.any():
+            raise ValueError('Some OHLC values are missing (NaN). '
+                             'Please strip those lines with `df.dropna()` or '
+                             'fill them in with `df.interpolate()` or whatever.')
+        if np.any(data['Close'] > cash):
+            warnings.warn('Some prices are larger than initial cash value. Note that fractional '
+                          'trading is not supported. If you want to trade Bitcoin, '
+                          'increase initial cash, or trade μBTC or satoshis instead (GH-134).',
+                          stacklevel=2)
+        if not data.index.is_monotonic_increasing:
+            warnings.warn('Data index is not sorted in ascending order. Sorting.',
+                          stacklevel=2)
+            data = data.sort_index()
+        if not isinstance(data.index, pd.DatetimeIndex):
+            warnings.warn('Data index is not datetime. Assuming simple periods, '
+                          'but `pd.DateTimeIndex` is advised.',
+                          stacklevel=2)
 
         self._data: pd.DataFrame = data
         self._broker = partial(
