@@ -1480,11 +1480,11 @@ class Backtest:
         #     current_data_up_to_date = combined_data[(combined_data['date'] > five_days_ago) & (combined_data['date'] <= current_date)]
         #     return  current_data_up_to_date  
         
-        # 初始化歷史數據變量
-        historical_data = None
+        # # 初始化歷史數據變量
+        # historical_data = None
 
         # progress_len = len(self._all_dates)
-        
+
         with np.errstate(invalid='ignore'):
             i = 0
             print(f"len of all dates: {len(self._all_dates)}")
@@ -1492,7 +1492,7 @@ class Backtest:
                 print(f"current_date: {current_date}")
 
                 # 選擇當前批次的數據
-                current_batch = self._data.loc[self._data['date']==current_date].compute()
+                current_batch = self._data.loc[self._data['date'] == current_date].compute()
                 # print('001')
                 # 處理當前批次的數據
                 # historical_data = process_batch(current_batch, historical_data)
@@ -1516,7 +1516,7 @@ class Backtest:
 
                 data._set_length(i)
                 i += 1
-  
+
             else:
                 # 關閉任何未平倉的交易
                 for trade in broker.trades:
