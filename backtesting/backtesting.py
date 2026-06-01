@@ -17,6 +17,7 @@ from functools import lru_cache, partial
 from itertools import chain, compress, product, repeat
 from math import copysign
 from numbers import Number
+from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Tuple, Type, Union
 import datetime
 import traceback
@@ -24,6 +25,15 @@ import traceback
 import numpy as np
 import pandas as pd
 from numpy.random import default_rng
+
+_multibt_root = Path(__file__).resolve().parents[2]
+if str(_multibt_root) not in sys.path:
+    sys.path.insert(0, str(_multibt_root))
+
+try:
+    from multibt.core.panel import PanelData
+except ImportError:
+    PanelData = None  # type: ignore
 
 
 try:
@@ -39,6 +49,7 @@ except ImportError:
 from ._plotting import plot  # noqa: I001
 from ._stats import compute_multiple_stats
 from ._util import _as_str, _Indicator, _Data, try_
+from .vectorized import VectorizedAnalytics, VectorizedIndicators
 
 __pdoc__ = {
     "Strategy.__init__": False,
@@ -189,6 +200,8 @@ class Strategy(metaclass=ABCMeta):
         )
         self._indicators.append(value)
         return value
+
+    I = calculate_indicator
 
     @abstractmethod
     def init(self):
@@ -704,34 +717,34 @@ class Trade:
     @property
     def entry_time(self) -> Union[pd.Timestamp, int]:
         """Datetime of when the trade was entered."""
-        # 直接計算所需位置的索引值
-        # 假設self.__entry_bar是入場位置的整數索引
         entry_bar_value = self.__entry_bar
-        unique_dates = self.__broker._data.__getdata__()["date"].compute().unique()
-
-        # 使用Pandas的`.iloc`進行行選擇
-        entry_time_date = unique_dates[entry_bar_value]
-        return entry_time_date
+        dates = getattr(self.__broker, "_all_dates", None)
+        if dates is not None and entry_bar_value < len(dates):
+            return dates[entry_bar_value]
+        raw = self.__broker._data.__getdata__()
+        date_col = raw["date"]
+        if hasattr(date_col, "compute"):
+            unique_dates = date_col.compute().unique()
+        else:
+            unique_dates = pd.to_datetime(date_col).unique()
+        return unique_dates[entry_bar_value]
 
     @property
     def exit_time(self) -> Optional[Union[pd.Timestamp, int]]:
         """Datetime of when the trade was exited."""
         if self.__exit_bar is None:
             return None
-        # 直接計算所需位置的索引值
-
-        # 假設self.__entry_bar是入場位置的整數索引
         exit_bar_value = self.__exit_bar
-        unique_dates = self.__broker._data.__getdata__()["date"].compute().unique()
-
-        # 使用Pandas的`.iloc`進行行選擇
-        try:
-            exit_time_date = unique_dates[exit_bar_value]
-            return exit_time_date
-        except Exception as e:
-            print("exit_bar_value:", exit_bar_value)
-            print("Length of df_pandas:", len(unique_dates))
-            raise e
+        dates = getattr(self.__broker, "_all_dates", None)
+        if dates is not None and exit_bar_value < len(dates):
+            return dates[exit_bar_value]
+        raw = self.__broker._data.__getdata__()
+        date_col = raw["date"]
+        if hasattr(date_col, "compute"):
+            unique_dates = date_col.compute().unique()
+        else:
+            unique_dates = pd.to_datetime(date_col).unique()
+        return unique_dates[exit_bar_value]
 
     @property
     def is_long(self):
@@ -834,20 +847,16 @@ class _Broker:
         self._hedging = hedging
         self._exclusive_orders = exclusive_orders
 
-        unique_dates = self._data.__getdata__()["date"].compute().unique()
-        print(f"df_pandas: {unique_dates}")
-
-        # 假設 self._data.df['date'] 是包含日期時間戳的列
-        myData = self._data.__getdata__()
-        if isinstance(myData, pd.DataFrame):
-            print("這是一個 Pandas DataFrame")
-            dateIndex = self._data.__getdata__()["date"]
+        raw = self._data.__getdata__()
+        if hasattr(raw, "compute"):
+            date_vals = raw["date"].compute().unique()
+        elif isinstance(raw, pd.DataFrame) and "date" in raw.columns:
+            date_vals = raw["date"].unique()
         else:
-            print("未知的 DataFrame 類型")
-        index = pd.to_datetime(dateIndex)  # 轉換為日期，並且標準化時間為00:00:00
-        unique_dates = pd.Index(index.dt.date.unique())
+            date_vals = raw.index.unique()
 
-        # 使用去重後日期建立 Series
+        index = pd.to_datetime(date_vals)
+        unique_dates = pd.Index(index.normalize().unique()).sort_values()
         self._equity = pd.Series(index=unique_dates, dtype=float)
 
         self.orders: List[Order] = []
@@ -1467,44 +1476,63 @@ class Backtest:
                             'entry order price')
 
         data = data.copy(deep=False)
-        # Convert index to datetime index
-        if (not isinstance(data.index, pd.DatetimeIndex) and
-            not isinstance(data.index, pd.RangeIndex) and
-            # Numeric index with most large numbers
-            (data.index.is_numeric() and
-             (data.index > pd.Timestamp('1975').timestamp()).mean() > .8)):
-            try:
-                data.index = pd.to_datetime(data.index, infer_datetime_format=True)
-            except ValueError:
-                pass
+        is_panel = "date" in data.columns and "stock_id" in data.columns
 
-        if 'Volume' not in data:
-            data['Volume'] = np.nan
+        if is_panel:
+            # 多股 panel 格式（dask 或 pandas，含 date / stock_id 欄）
+            if "Volume" not in data.columns:
+                data["Volume"] = np.nan
+            required = {"Open", "High", "Low", "Close", "Volume", "date", "stock_id"}
+            if not required.issubset(set(data.columns)):
+                raise ValueError(
+                    f"Panel data must contain columns {required}, got {set(data.columns)}"
+                )
+        else:
+            # 單股 OHLCV 格式（原始 backtesting.py 行為）
+            if (not isinstance(data.index, pd.DatetimeIndex) and
+                not isinstance(data.index, pd.RangeIndex) and
+                hasattr(data.index, "is_numeric") and
+                data.index.is_numeric() and
+                (data.index > pd.Timestamp('1975').timestamp()).mean() > .8):
+                try:
+                    data.index = pd.to_datetime(data.index, infer_datetime_format=True)
+                except ValueError:
+                    pass
 
-        if len(data) == 0:
-            raise ValueError('OHLC `data` is empty')
-        if len(data.columns.intersection({'Open', 'High', 'Low', 'Close', 'Volume'})) != 5:
-            raise ValueError("`data` must be a pandas.DataFrame with columns "
-                             "'Open', 'High', 'Low', 'Close', and (optionally) 'Volume'")
-        if data[['Open', 'High', 'Low', 'Close']].isnull().values.any():
-            raise ValueError('Some OHLC values are missing (NaN). '
-                             'Please strip those lines with `df.dropna()` or '
-                             'fill them in with `df.interpolate()` or whatever.')
-        if np.any(data['Close'] > cash):
-            warnings.warn('Some prices are larger than initial cash value. Note that fractional '
-                          'trading is not supported. If you want to trade Bitcoin, '
-                          'increase initial cash, or trade μBTC or satoshis instead (GH-134).',
-                          stacklevel=2)
-        if not data.index.is_monotonic_increasing:
-            warnings.warn('Data index is not sorted in ascending order. Sorting.',
-                          stacklevel=2)
-            data = data.sort_index()
-        if not isinstance(data.index, pd.DatetimeIndex):
-            warnings.warn('Data index is not datetime. Assuming simple periods, '
-                          'but `pd.DateTimeIndex` is advised.',
-                          stacklevel=2)
+            if 'Volume' not in data:
+                data['Volume'] = np.nan
+
+            if len(data) == 0:
+                raise ValueError('OHLC `data` is empty')
+            if len(data.columns.intersection({'Open', 'High', 'Low', 'Close', 'Volume'})) != 5:
+                raise ValueError("`data` must be a pandas.DataFrame with columns "
+                                 "'Open', 'High', 'Low', 'Close', and (optionally) 'Volume'")
+            null_check = data[['Open', 'High', 'Low', 'Close']].isnull()
+            if hasattr(null_check, "compute"):
+                null_check = null_check.compute()
+            if null_check.values.any():
+                raise ValueError('Some OHLC values are missing (NaN). '
+                                 'Please strip those lines with `df.dropna()` or '
+                                 'fill them in with `df.interpolate()` or whatever.')
+            close_vals = data['Close']
+            if hasattr(close_vals, "compute"):
+                close_vals = close_vals.compute()
+            if np.any(close_vals > cash):
+                warnings.warn('Some prices are larger than initial cash value. Note that fractional '
+                              'trading is not supported. If you want to trade Bitcoin, '
+                              'increase initial cash, or trade μBTC or satoshis instead (GH-134).',
+                              stacklevel=2)
+            if not data.index.is_monotonic_increasing:
+                warnings.warn('Data index is not sorted in ascending order. Sorting.',
+                              stacklevel=2)
+                data = data.sort_index()
+            if not isinstance(data.index, pd.DatetimeIndex):
+                warnings.warn('Data index is not datetime. Assuming simple periods, '
+                              'but `pd.DateTimeIndex` is advised.',
+                              stacklevel=2)
 
         self._data: pd.DataFrame = data
+        data_index = data.index if not is_panel else pd.Index([])
         self._broker = partial(
             _Broker,
             cash=cash,
@@ -1513,130 +1541,219 @@ class Backtest:
             trade_on_close=trade_on_close,
             hedging=hedging,
             exclusive_orders=exclusive_orders,
-            index=data.index,
+            index=data_index,
         )
         # print('data index is :' + str(data.index))
         self._strategy = strategy
         self._results: Optional[pd.Series] = None
+        self._panel = None
+        self._is_panel = is_panel
 
-        # 獲取唯一的日期並排序
-        unique_dates = self._data["date"].drop_duplicates().compute()
-        unique_dates = unique_dates.sort_values()
-        self._all_dates = unique_dates
+        if is_panel and PanelData is not None:
+            df = data.compute() if hasattr(data, "compute") else data
+            self._panel = PanelData.from_dataframe(df)
+            self._data = df
+            self._all_dates = self._panel.dates
+        elif is_panel:
+            unique_dates = self._data["date"].drop_duplicates()
+            if hasattr(unique_dates, "compute"):
+                unique_dates = unique_dates.compute()
+            self._all_dates = pd.DatetimeIndex(sorted(pd.to_datetime(unique_dates.unique())))
+        else:
+            self._all_dates = self._data.index
+
         self._cash = cash
 
-    def run(self, **kwargs) -> pd.Series:
+    def _batch_at(self, t: int, current_date=None) -> pd.DataFrame:
+        """取得第 t 步的 batch 資料，優先使用 PanelData 避免 dask.compute()。"""
+        if self._panel is not None:
+            return self._panel.batch_dataframe_at(t)
+        if current_date is not None and hasattr(self._data, "loc"):
+            batch = self._data.loc[self._data["date"] == current_date]
+            return batch.compute() if hasattr(batch, "compute") else batch
+        return self._data.iloc[t:t + 1]
+
+    def _get_computed_data(self) -> pd.DataFrame:
+        """將 dask 或 pandas DataFrame 統一為 pandas。"""
+        if hasattr(self._data, "compute"):
+            return self._data.compute()
+        return self._data
+
+    def _build_asset_data(self) -> Dict[str, pd.DataFrame]:
+        """將 panel 資料轉為 {stock_id: OHLCV DataFrame}。"""
+        if self._panel is not None:
+            return self._panel.to_asset_dict()
+        df = self._get_computed_data()
+        data: Dict[str, pd.DataFrame] = {}
+        for asset in sorted(df["stock_id"].unique()):
+            mask = df["stock_id"] == asset
+            asset_df = df.loc[mask].copy()
+            asset_df["date"] = pd.to_datetime(asset_df["date"])
+            asset_df = (
+                asset_df.set_index("date")
+                .sort_index()[["Open", "High", "Low", "Close", "Volume"]]
+            )
+            data[str(asset)] = asset_df
+        return data
+
+    @staticmethod
+    def _resolve_crossover_params(strategy_cls, kwargs: dict) -> Tuple[int, int]:
+        """解析 fast/slow 或 n1/n2 等常見均線參數名稱。"""
+        fast = kwargs.get("fast") or kwargs.get("n1") or getattr(strategy_cls, "fast", None)
+        slow = kwargs.get("slow") or kwargs.get("n2") or getattr(strategy_cls, "slow", None)
+        if fast is None or slow is None:
+            raise ValueError(
+                "vectorized_signals 模式需要 fast/slow（或 n1/n2）參數，"
+                "請在策略類別或 run() 關鍵字參數中指定。"
+            )
+        return int(fast), int(slow)
+
+    def _apply_crossover_signals(
+        self,
+        strategy: Strategy,
+        vi: VectorizedIndicators,
+        entries: np.ndarray,
+        exits: np.ndarray,
+        t: int,
+    ):
+        """從預計算矩陣查詢訊號並下單（事件驅動執行層）。"""
+        for i, asset in enumerate(vi.assets):
+            if entries[t, i]:
+                for trade in list(strategy.trades):
+                    if trade.stock == asset and trade.is_short:
+                        trade.close(asset)
+                strategy.buy(stock=asset)
+            elif exits[t, i]:
+                for trade in list(strategy.trades):
+                    if trade.stock == asset and trade.is_long:
+                        trade.close(asset)
+                strategy.sell(stock=asset)
+
+    def _finalize_run(self, broker: _Broker, data: _Data, strategy: Strategy) -> pd.Series:
+        """關閉未平倉交易並計算績效。"""
+        for trade in broker.trades:
+            trade.close(trade.stock)
+        if self._all_dates.size > 0:
+            try_(broker.next, exception=_OutOfMoneyError)
+        data._set_length(len(self._all_dates))
+        equity_series = pd.Series(broker._equity).bfill().fillna(broker._cash)
+        equity = equity_series.values
+
+        stats_index = pd.DatetimeIndex(pd.to_datetime(equity_series.index))
+        stats_ohlc = pd.DataFrame(
+            {
+                "Close": equity,
+                "Open": equity,
+                "High": equity,
+                "Low": equity,
+                "Volume": 0.0,
+                "date": stats_index,
+            },
+            index=stats_index,
+        )
+
+        self._results = compute_multiple_stats(
+            trades=broker.closed_trades,
+            equity=equity,
+            ohlc_data=stats_ohlc,
+            risk_free_rate=0.0,
+            strategy_instance=strategy,
+        )
+        if self._results is None:
+            raise RuntimeError("compute_multiple_stats returned None")
+
+        self._results.loc["_vectorized_sharpe"] = VectorizedAnalytics.sharpe_ratio(
+            equity_series
+        )
+        self._results.loc["_vectorized_max_drawdown"] = VectorizedAnalytics.max_drawdown(
+            equity_series
+        )
+        self._results.loc["_vectorized_cagr"] = VectorizedAnalytics.cagr(equity_series)
+        return self._results
+
+    def run(self, *, mode: str = "event_driven", **kwargs) -> pd.Series:
         """
         Run the backtest. Returns `pd.Series` with results and statistics.
 
+        Parameters
+        ----------
+        mode : str
+            * ``'event_driven'`` — 原始事件驅動模式（策略在 next() 中計算訊號）
+            * ``'vectorized_signals'`` — 混合模式：訊號向量化預計算 + 事件驅動執行
+
         Keyword arguments are interpreted as strategy parameters.
-
-            >>> Backtest(GOOG, SmaCross).run()
-            Start                     2004-08-19 00:00:00
-            End                       2013-03-01 00:00:00
-            Duration                   3116 days 00:00:00
-            Exposure Time [%]                     93.9944
-            Equity Final [$]                      51959.9
-            Equity Peak [$]                       75787.4
-            Return [%]                            419.599
-            Buy & Hold Return [%]                 703.458
-            Return (Ann.) [%]                      21.328
-            Volatility (Ann.) [%]                 36.5383
-            Sharpe Ratio                         0.583718
-            Sortino Ratio                         1.09239
-            Calmar Ratio                         0.444518
-            Max. Drawdown [%]                    -47.9801
-            Avg. Drawdown [%]                    -5.92585
-            Max. Drawdown Duration      584 days 00:00:00
-            Avg. Drawdown Duration       41 days 00:00:00
-            # Trades                                   65
-            Win Rate [%]                          46.1538
-            Best Trade [%]                         53.596
-            Worst Trade [%]                      -18.3989
-            Avg. Trade [%]                        2.35371
-            Max. Trade Duration         183 days 00:00:00
-            Avg. Trade Duration          46 days 00:00:00
-            Profit Factor                         2.08802
-            Expectancy [%]                        8.79171
-            SQN                                  0.916893
-            Kelly Criterion                        0.6134
-            _strategy                            SmaCross
-            _equity_curve                           Eq...
-            _trades                       Size  EntryB...
-            dtype: object
-
-        .. warning::
-            You may obtain different results for different strategy parameters.
-            E.g. if you use 50- and 200-bar SMA, the trading simulation will
-            begin on bar 201. The actual length of delay is equal to the lookback
-            period of the `Strategy.I` indicator which lags the most.
-            Obviously, this can affect results.
         """
+        if mode == "event_driven":
+            return self._run_event_driven(**kwargs)
+        if mode == "vectorized_signals":
+            return self._run_vectorized_signals(**kwargs)
+        raise ValueError(f"Unknown mode: {mode!r}. Use 'event_driven' or 'vectorized_signals'.")
+
+    def _run_event_driven(self, **kwargs) -> pd.Series:
+        """原始事件驅動回測：策略在 next() 中逐步計算訊號。"""
         data = _Data(self._data.copy(deep=False))
         broker: _Broker = self._broker(data=data)
+        broker._all_dates = self._all_dates
         strategy: Strategy = self._strategy(broker, data, kwargs)
         strategy.init()
-        data._update()  # Strategy.init might have changed/added to data.df
-        # Indicators used in Strategy.next()
-        # indicator_attrs = {attr: indicator
-        #                    for attr, indicator in strategy.__dict__.items()
-        #                    if isinstance(indicator, _Indicator)}.items()
+        data._update()
 
         with np.errstate(invalid="ignore"):
-            i = 0
-            print(f"len of all dates: {len(self._all_dates)}")
-            for current_date in self._all_dates:
-                print(f"current_date: {current_date}")
-
-                # 選擇當前批次的數據
-                current_batch = self._data.loc[
-                    self._data["date"] == current_date
-                ].compute()
-                # print('001')
-                # 處理當前批次的數據
-                # historical_data = process_batch(current_batch, historical_data)
-                # 更新日期為當前日期
+            dates = self._all_dates
+            for i in range(len(dates)):
+                current_date = dates[i]
+                current_batch = self._batch_at(i, current_date)
                 broker.update_current_date(current_date)
-                # print('002')
-                # 更新數據
-                # data.set_data(historical_data)
                 data.set_data(current_batch)
-                # print('003')
 
-                # 處理訂單
                 try:
                     broker.next()
-                    # print('004')
-                    # 進行策略迭代
                     strategy.next(current_batch)
-                    # print('005')
                 except _OutOfMoneyError:
                     pass
 
                 data._set_length(i)
-                i += 1
 
-            else:
-                # 關閉任何未平倉的交易
-                for trade in broker.trades:
-                    trade.close(trade.stock)
-                # 重新運行broker.next()以更新最後一天的資產
-                if self._all_dates.size > 0:
-                    try_(broker.next, exception=_OutOfMoneyError)
-            data._set_length(len(self._data))
-            equity = pd.Series(broker._equity).bfill().fillna(broker._cash).values
+            return self._finalize_run(broker, data, strategy)
 
-            print(len(equity))
+    def _run_vectorized_signals(self, **kwargs) -> pd.Series:
+        """
+        混合模式（doc/vectorize.md）：
+        - Layer 1：向量化預計算所有訊號（迴圈外）
+        - Layer 2：事件驅動執行訂單（迴圈內只做 O(1) 查表）
+        - Layer 3：向量化計算績效（迴圈外）
+        """
+        fast, slow = self._resolve_crossover_params(self._strategy, kwargs)
 
-            self._results = compute_multiple_stats(
-                trades=broker.closed_trades,
-                equity=equity,
-                ohlc_data=self._data,
-                risk_free_rate=0.0,
-                strategy_instance=strategy,
-            )
+        # Layer 1：向量化預處理
+        vi = VectorizedIndicators(self._build_asset_data())
+        entries, exits = vi.crossover_signals(fast, slow)
 
-        return self._results
+        # Layer 2：事件驅動執行
+        data = _Data(self._data.copy(deep=False))
+        broker: _Broker = self._broker(data=data)
+        broker._all_dates = self._all_dates
+        strategy: Strategy = self._strategy(broker, data, kwargs)
+        strategy.init()
+        data._update()
+
+        with np.errstate(invalid="ignore"):
+            dates = self._all_dates
+            for t in range(len(dates)):
+                current_date = dates[t]
+                current_batch = self._batch_at(t, current_date)
+                broker.update_current_date(current_date)
+                data.set_data(current_batch)
+
+                try:
+                    broker.next()
+                    self._apply_crossover_signals(strategy, vi, entries, exits, t)
+                except _OutOfMoneyError:
+                    pass
+
+                data._set_length(t)
+
+            return self._finalize_run(broker, data, strategy)
 
     def optimize(
         self,

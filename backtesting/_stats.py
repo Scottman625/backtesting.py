@@ -198,16 +198,19 @@ def compute_multiple_stats(
     try:
         assert -1 < risk_free_rate < 1
 
-        ohlc_data_unique = ohlc_data.map_partitions(remove_duplicates)
+        if hasattr(ohlc_data, "map_partitions"):
+            ohlc_data_unique_computed = ohlc_data.map_partitions(remove_duplicates).compute()
+        else:
+            ohlc_data_unique_computed = remove_duplicates(ohlc_data.reset_index())
 
-        # 计算并获取去重后的结果
-        # 注意：直接计算整个 DataFrame 而不仅是索引
-        ohlc_data_unique_computed = ohlc_data_unique.compute()
-
-        # 获取去重后的索引
         index = ohlc_data_unique_computed.index
-        # print(equity)
-        # print(index)
+        if len(index) != len(equity):
+            if "date" in ohlc_data_unique_computed.columns:
+                index = pd.Index(
+                    pd.to_datetime(ohlc_data_unique_computed["date"]).unique()
+                ).sort_values()
+            if len(index) != len(equity):
+                index = pd.RangeIndex(len(equity))
 
         dd = 1 - equity / np.maximum.accumulate(equity)
         dd_dur, dd_peaks = compute_drawdown_duration_peaks(pd.Series(dd, index=index))
@@ -246,8 +249,6 @@ def compute_multiple_stats(
             trades_df["Duration"] = trades_df["ExitTime"] - trades_df["EntryTime"]
         del trades
 
-        print(trades_df)
-
         pl = trades_df["PnL"]
         returns = trades_df["ReturnPct"]
         durations = trades_df["Duration"]
@@ -275,12 +276,9 @@ def compute_multiple_stats(
         s.loc["Equity Final [$]"] = equity[-1]
         s.loc["Equity Peak [$]"] = equity.max()
         s.loc["Return [%]"] = (equity[-1] - equity[0]) / equity[0] * 100
-        c_start = ohlc_data[ohlc_data["date"] == index[0]].Close.compute().sum()
-        c_end = ohlc_data[ohlc_data["date"] == index[-1]].Close.compute().sum()
-        # s.loc['Buy & Hold Return [%]'] = (c[-1] - c[0]) / c[0] * 100  # long-only return
-        s.loc["Buy & Hold Return [%]"] = (
-            (c_end - c_start) / c_start * 100
-        )  # long-only return
+        c_start = ohlc_data_unique_computed["Close"].iloc[0]
+        c_end = ohlc_data_unique_computed["Close"].iloc[-1]
+        s.loc["Buy & Hold Return [%]"] = (c_end - c_start) / c_start * 100
 
         gmean_day_return: float = 0
         day_returns = np.array(np.nan)
