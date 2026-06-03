@@ -9,12 +9,12 @@
   vectorized_signals    backtesting.py 混合模式                   正確性基準
                         訊號預算（Layer 1）+ 事件執行（Layer 2）
 
-  broker                MultiBT 委派 vectorized_signals           =上行
+  broker                chidoribt 委派 vectorized_signals           =上行
 
-  portfolio/fast        MultiBT Numba @njit kernel（快取後）      本專案主打
-  portfolio/python      MultiBT Python UnifiedPortfolio           完整 audit log
+  portfolio/fast        chidoribt Numba @njit kernel（快取後）      本專案主打
+  portfolio/python      chidoribt Python UnifiedPortfolio           完整 audit log
   portfolio/next_open   Numba kernel + next_open 成交價           接近 broker
-  rebalance             MultiBT 每日等權再平衡                    組合語意
+  rebalance             chidoribt 每日等權再平衡                    組合語意
 
 用法:
     python benchmark_vectorize.py --stocks 20 --days 80
@@ -38,9 +38,9 @@ sys.path.insert(0, str(ROOT / "backtesting.py"))
 sys.path.insert(0, str(ROOT))
 
 from backtesting import Backtest, Strategy
-from multibt import MultiBT
-from multibt.core.numba_kernels import NUMBA_AVAILABLE
-from multibt.vectorized import VectorizedIndicators
+from chidoribt import ChidoriBT
+from chidoribt.core.numba_kernels import NUMBA_AVAILABLE
+from chidoribt.vectorized import VectorizedIndicators
 
 FAST, SLOW = 10, 30
 CASH = 1_000_000
@@ -173,7 +173,7 @@ def benchmark(n_stocks: int, n_days: int, skip_event_driven: bool = False):
     sep = "=" * 80
     print(sep)
     print(
-        f"  MultiBT 全模式 benchmark | SmaCross({FAST},{SLOW}) | "
+        f"  chidoribt 全模式 benchmark | SmaCross({FAST},{SLOW}) | "
         f"{n_stocks} 股 x {n_days} 天"
     )
     print(f"  Numba: {NUMBA_AVAILABLE}")
@@ -217,8 +217,8 @@ def benchmark(n_stocks: int, n_days: int, skip_event_driven: bool = False):
     trd["vectorized_signals"] = int(res["# Trades"])
     ret["vectorized_signals"] = float(res["Return [%]"])
 
-    # ── broker（MultiBT 委派 vectorized_signals）──────────────────────────────
-    t, res = _run(lambda: MultiBT(
+    # ── broker（chidoribt 委派 vectorized_signals）──────────────────────────────
+    t, res = _run(lambda: ChidoriBT(
         panel, cash=CASH, commission=COMMISSION,
         fast_param=FAST, slow_param=SLOW,
     ).run(mode="broker"))
@@ -227,7 +227,7 @@ def benchmark(n_stocks: int, n_days: int, skip_event_driven: bool = False):
     ret["broker"] = float(res["metrics"].get("Return [%]", 0))
 
     # ── portfolio / Numba fast（首次，含 JIT 暖機）───────────────────────────
-    t, res = _run(lambda: MultiBT(
+    t, res = _run(lambda: ChidoriBT(
         panel, cash=CASH, commission=COMMISSION,
         fast_param=FAST, slow_param=SLOW, fast=True,
     ).run(mode="portfolio", trade_on="close"))
@@ -237,7 +237,7 @@ def benchmark(n_stocks: int, n_days: int, skip_event_driven: bool = False):
     ret["portfolio_fast_warm"] = float(m.get("return_pct", 0))
 
     # ── portfolio / Numba fast（第二次，JIT 快取後）──────────────────────────
-    t, res = _run(lambda: MultiBT(
+    t, res = _run(lambda: ChidoriBT(
         panel, cash=CASH, commission=COMMISSION,
         fast_param=FAST, slow_param=SLOW, fast=True,
     ).run(mode="portfolio", trade_on="close"))
@@ -247,7 +247,7 @@ def benchmark(n_stocks: int, n_days: int, skip_event_driven: bool = False):
     ret["portfolio_fast"] = float(m.get("return_pct", 0))
 
     # ── portfolio / Python slow（完整 audit log）──────────────────────────────
-    t, res = _run(lambda: MultiBT(
+    t, res = _run(lambda: ChidoriBT(
         panel, cash=CASH, commission=COMMISSION,
         fast_param=FAST, slow_param=SLOW, fast=False,
     ).run(mode="portfolio", trade_on="close"))
@@ -257,7 +257,7 @@ def benchmark(n_stocks: int, n_days: int, skip_event_driven: bool = False):
     ret["portfolio_python"] = float(m.get("return_pct", 0))
 
     # ── portfolio / next_open（較接近 broker 成交價）─────────────────────────
-    t, res = _run(lambda: MultiBT(
+    t, res = _run(lambda: ChidoriBT(
         panel, cash=CASH, commission=COMMISSION,
         fast_param=FAST, slow_param=SLOW, fast=True,
     ).run(mode="portfolio", trade_on="next_open"))
@@ -267,7 +267,7 @@ def benchmark(n_stocks: int, n_days: int, skip_event_driven: bool = False):
     ret["portfolio_next_open"] = float(m.get("return_pct", 0))
 
     # ── rebalance（不同執行語意）──────────────────────────────────────────────
-    t, res = _run(lambda: MultiBT(
+    t, res = _run(lambda: ChidoriBT(
         panel, cash=CASH, commission=COMMISSION,
         fast_param=FAST, slow_param=SLOW, fast=True,
     ).run(mode="rebalance"))
@@ -282,7 +282,7 @@ def benchmark(n_stocks: int, n_days: int, skip_event_driven: bool = False):
     rows = [
         ("event_driven",        "原始事件迴圈，O(T^2*N) 指標計算",          True),
         ("vectorized_signals",  "Layer1 向量化 + Layer2 事件執行 [正確性基準]", False),
-        ("broker",              "MultiBT 委派 vectorized_signals",           False),
+        ("broker",              "chidoribt 委派 vectorized_signals",           False),
         ("portfolio_fast_warm", f"Numba @njit {'(含 JIT 暖機)' if NUMBA_AVAILABLE else '(無Numba)'}",  False),
         ("portfolio_fast",      "Numba @njit（JIT 快取後）",                  False),
         ("portfolio_python",    "Python UnifiedPortfolio（完整 audit log）", False),
@@ -333,7 +333,7 @@ def benchmark(n_stocks: int, n_days: int, skip_event_driven: bool = False):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="MultiBT 全模式 benchmark（SmaCross 策略）"
+        description="chidoribt 全模式 benchmark（SmaCross 策略）"
     )
     parser.add_argument("--stocks", type=int, default=20,
                         help="股票數量（預設 20）")

@@ -1,4 +1,4 @@
-"""
+﻿"""
 Core framework data structures.
 Objects from this module can also be imported from the top-level
 module directly, e.g.
@@ -26,12 +26,12 @@ import numpy as np
 import pandas as pd
 from numpy.random import default_rng
 
-_multibt_root = Path(__file__).resolve().parents[2]
-if str(_multibt_root) not in sys.path:
-    sys.path.insert(0, str(_multibt_root))
+_chidoribt_root = Path(__file__).resolve().parents[2]
+if str(_chidoribt_root) not in sys.path:
+    sys.path.insert(0, str(_chidoribt_root))
 
 try:
-    from multibt.core.panel import PanelData
+    from chidoribt.core.panel import PanelData
 except ImportError:
     PanelData = None  # type: ignore
 
@@ -963,20 +963,12 @@ class _Broker:
         self.update_equity(self._current_date)
 
     def update_equity(self, current_date, init_value=None):
-        total_stock_value = 0
         if init_value is not None:
             total_equity = init_value
         else:
-            for stock, position in self.positions.items():
-                # 假設有方法 self.get_stock_price 來獲取當前股票價格
-                try:
-                    stock_price = self.get_stock_price(stock=stock)
-                    # print(position['quantity'],stock_price)
-                    total_stock_value += position["quantity"] * stock_price
-                except Exception as e:
-                    raise e
-
-            total_equity = self._cash + total_stock_value
+            # equity property = _cash + sum(trade.pl) 正確計算：
+            # 初始現金 + 已實現損益 + 未實現損益，不會雙計持倉成本
+            total_equity = self.equity
 
         # 更新 self._equity Series 的相應日期條目
         current_date = pd.Timestamp(current_date).date()
@@ -1036,7 +1028,12 @@ class _Broker:
 
     @property
     def equity(self) -> float:
-        return self._cash + sum(trade.pl for trade in self.trades)
+        # 加計未平倉的未實現損益，同時預估出場手續費（與 _close_trade 保持對稱）
+        unrealized_exit_commission = sum(
+            abs(t.size) * (self.last_price(t.stock) or 0.0) * self._commission
+            for t in self.trades
+        )
+        return self._cash + sum(trade.pl for trade in self.trades) - unrealized_exit_commission
 
     def margin_available(self) -> float:
         # From https://github.com/QuantConnect/Lean/pull/3768
@@ -1368,7 +1365,9 @@ class _Broker:
             self.closed_trades.append(
                 trade._replace(exit_price=price, exit_bar=time_index)
             )
-            self._cash += trade.pl
+            # 補上出場手續費（入場已透過 adjusted_price bake 進去，出場需另行扣除）
+            exit_commission = abs(trade.size) * price * self._commission
+            self._cash += trade.pl - exit_commission
         except Exception as e:
             tb = traceback.format_exc()
             print(f"An error occurred: {e}")
